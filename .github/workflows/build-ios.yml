@@ -1,0 +1,53 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/build-ios.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build remember_app iOS unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.24.5'
+
+      - name: Scaffold missing platform folders
+        run: flutter create --platforms=ios --project-name remember_app --org com.example .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS release (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/ios/ipa/Payload
+          ditto build/ios/iphoneos/Runner.app build/ios/ipa/Payload/Runner.app
+          cd build/ios/ipa
+          zip -qry remember-app-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remember-app-unsigned-ipa
+          path: build/ios/ipa/remember-app-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

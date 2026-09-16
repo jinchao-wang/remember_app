@@ -1,0 +1,34 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+.build/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+.idea/
+*.iml
+.vscode/
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+*.keystore
+*.jks
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Runner.xcworkspace/xcshareddata/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# OS
+.DS_Store
+Thumbs.db

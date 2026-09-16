@@ -1,0 +1,26 @@
+name: remember_app
+description: 本地优先的 Flutter 记账应用，支持 Android 支付通知自动记录、iOS 手动记账、统计与 CSV 导入导出。
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.3+1
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  csv: ^5.1.1
+  file_picker: ^8.1.3
+  fl_chart: ^0.68.0
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
