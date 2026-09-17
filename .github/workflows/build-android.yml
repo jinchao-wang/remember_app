@@ -34,9 +34,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Scaffold missing platform folders
-        run: flutter create --platforms=android --project-name remember_app --org com.example .
-
       - name: Install dependencies
         run: flutter pub get
 
