@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction.dart';
 import '../services/app_state.dart';
@@ -33,7 +33,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Widget build(BuildContext context) {
     final isEdit = widget.transaction != null;
     return Scaffold(
-      appBar: AppBar(title: Text(isEdit ? '编辑账单' : '新增账单')),
+      appBar: AppBar(title: Text(isEdit ? 'Edit Transaction' : 'Add Transaction')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -42,8 +42,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
             children: [
               SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(value: 'expense', label: Text('支出')),
-                  ButtonSegment(value: 'income', label: Text('收入')),
+                  ButtonSegment(value: 'expense', label: Text('Expense')),
+                  ButtonSegment(value: 'income', label: Text('Income')),
                 ],
                 selected: {_type},
                 onSelectionChanged: (s) => setState(() => _type = s.first),
@@ -52,18 +52,18 @@ class _AddEditScreenState extends State<AddEditScreen> {
               TextFormField(
                 controller: _amountCtrl,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: '金额', prefixText: '¥ '),
-                validator: (v) => v == null || double.tryParse(v) == null || double.parse(v) <= 0 ? '请输入有效金�? : null,
+                decoration: const InputDecoration(labelText: 'Amount', prefixText: '¥ '),
+                validator: (v) => v == null || double.tryParse(v) == null || double.parse(v) <= 0 ? 'Please enter a valid amount' : null,
               ),
               TextFormField(
                 controller: _categoryCtrl,
-                decoration: const InputDecoration(labelText: '分类'),
-                validator: (v) => v == null || v.trim().isEmpty ? '分类不能为空' : null,
+                decoration: const InputDecoration(labelText: 'Category'),
+                validator: (v) => v == null || v.trim().isEmpty ? 'Category cannot be empty' : null,
               ),
-              TextFormField(controller: _noteCtrl, decoration: const InputDecoration(labelText: '备注（可选）')),
+              TextFormField(controller: _noteCtrl, decoration: const InputDecoration(labelText: 'Note (optional)')),
               const SizedBox(height: 12),
               ListTile(
-                title: const Text('日期'),
+                title: const Text('Date'),
                 subtitle: Text(DateFormat('yyyy-MM-dd HH:mm').format(_date)),
                 trailing: const Icon(Icons.calendar_today),
                 onTap: _pickDate,
@@ -71,7 +71,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _save,
-                child: Text(isEdit ? '保存修改' : '添加账单'),
+                child: Text(isEdit ? 'Save Changes' : 'Add Transaction'),
               ),
             ],
           ),

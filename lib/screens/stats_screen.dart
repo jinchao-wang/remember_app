@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+锘縤mport 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../models/transaction.dart';
 import '../services/app_state.dart';
@@ -90,12 +90,12 @@ class _StatsScreenState extends State<StatsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('本月概览'),
+                const Text('Monthly Overview'),
                 const SizedBox(height: 8),
                 Text(
-                    '支出 ￥${monthExpense.toStringAsFixed(2)}  ·  收入 ￥${monthIncome.toStringAsFixed(2)}'),
+                    'Expense: \$$monthExpense.toFixed(2)  路  Income: \$$monthIncome.toFixed(2)'),
                 const SizedBox(height: 4),
-                Text('今日支出 ￥${dayExpense.toStringAsFixed(2)}  ·  今日收入 ￥${dayIncome.toStringAsFixed(2)}',
+                Text('Today: Expense \$$dayExpense.toFixed(2)  路  Income \$$dayIncome.toFixed(2)',
                     style: const TextStyle(color: Colors.grey)),
               ],
             ),
@@ -107,10 +107,10 @@ class _StatsScreenState extends State<StatsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('分类占比（本月支出）'),
+                const Text('Expense by Category (This Month)'),
                 const SizedBox(height: 8),
                 pieSections.isEmpty
-                    ? const Text('暂无数据')
+                    ? const Text('No data yet')
                     : SizedBox(
                         height: 220,
                         child: PieChart(PieChartData(sections: pieSections)),
@@ -125,10 +125,10 @@ class _StatsScreenState extends State<StatsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('支出趋势（近30天日度）'),
+                const Text('Expense Trend (Last 30 Days)'),
                 const SizedBox(height: 8),
                 lineSpots.isEmpty
-                    ? const Text('暂无数据')
+                    ? const Text('No data yet')
                     : SizedBox(
                         height: 220,
                         child: LineChart(

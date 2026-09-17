@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+锘縤mport 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
@@ -43,7 +43,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     }
     if (_items.isEmpty) {
       return const Center(
-          child: Text('还没有账单\n点击右下角 + 记一笔', textAlign: TextAlign.center));
+          child: Text('No transactions yet\nTap + to add one', textAlign: TextAlign.center));
     }
     return RefreshIndicator(
       onRefresh: _reload,
@@ -65,7 +65,7 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
             subtitle: Text(
                 '${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')} ${t.date.hour.toString().padLeft(2, '0')}:${t.date.minute.toString().padLeft(2, '0')}  ${t.note ?? ''}'),
             trailing: Text(
-              '${t.type == 'expense' ? '-' : '+'}${t.amount.toStringAsFixed(2)}',
+              '${t.type == 'expense' ? '-' : '+'}$${t.amount.toStringAsFixed(2)}',
               style: TextStyle(color: color, fontWeight: FontWeight.bold),
             ),
             onTap: () async {
@@ -85,15 +85,15 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除账单'),
+        title: const Text('Delete Transaction'),
         content:
-            Text('确定删除 ${t.category} ${t.amount.toStringAsFixed(2)} 吗？'),
+            Text('Delete ${t.category} ${t.amount.toStringAsFixed(2)}?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+              child: const Text('Cancel')),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
         ],
       ),
     ).then((ok) async {
