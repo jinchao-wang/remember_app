@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/app_state.dart';
+import '../models/transaction.dart';
 import '../services/database.dart';
 import '../utils/csv_helper.dart';
 
@@ -16,13 +17,13 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _export() async {
     final tx = await DatabaseHelper.instance.getTransactions();
-    final csv = transactionsToCsv(tx);
+    final csv = tx.isEmpty ? '' : transactionsToCsv(tx);
     final dir = await getApplicationDocumentsDirectory();
     final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
     final file = File('${dir.path}/remember_export_$stamp.csv');
     await file.writeAsString(csv);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('å·²å¯¼å‡º ${tx.length} æ¡\n${file.path}')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ÒÑŒ§³ö ${tx.length} —l\n${file.path}')));
   }
 
   Future<void> _import() async {
@@ -31,12 +32,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final text = await File(res.files.single.path!).readAsString();
     final list = csvToTransactions(text);
     if (list.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('æœªè§£æåˆ°æœ‰æ•ˆæ•°æ®')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Î´½âÎöµ½ÓĞĞ§”µ“ş')));
       return;
     }
     await DatabaseHelper.instance.insertAll(list);
     AppState.instance.bump();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('å·²å¯¼å…¥ ${list.length} æ¡')));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ÒÑŒ§Èë ${list.length} —l')));
   }
 
   @override
@@ -44,20 +47,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('æ•°æ®ç®¡ç†'),
+        const Text('”µ“ş¹ÜÀí'),
         const SizedBox(height: 8),
         Card(
           child: Column(
             children: [
-              ListTile(leading: const Icon(Icons.download), title: const Text('å¯¼å‡º CSV'), onTap: _export),
+              ListTile(leading: const Icon(Icons.download), title: const Text('Œ§³ö CSV'), onTap: _export),
               const Divider(height: 1),
-              ListTile(leading: const Icon(Icons.upload), title: const Text('å¯¼å…¥ CSV'), onTap: _import),
+              ListTile(leading: const Icon(Icons.upload), title: const Text('Œ§Èë CSV'), onTap: _import),
             ],
           ),
         ),
         const SizedBox(height: 24),
-        const Text('å…³äº'),
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: const Text('Remember è®°è´¦ v1.0\næ•°æ®ä»…ä¿å­˜åœ¨æœ¬æœºï¼Œä¸ä¸Šä¼ æœåŠ¡å™¨ã€‚Android å¯å¼€å¯æ”¯ä»˜é€šçŸ¥è‡ªåŠ¨è®°å½•åŠŸèƒ½ã€‚'))),
+        const Text('êPì¶'),
+        Card(child: const Padding(padding: EdgeInsets.all(16), child: Text('Remember Ó›Ù~ v1.0\n”µ“şƒH±£´æÔÚ±¾™C£¬²»ÉÏ‚÷ËÅ·şÆ÷¡£Android ¿Éé_†¢Ö§¸¶Í¨Öª×Ô„ÓÓ›ä›¹¦ÄÜ¡£'))),
       ],
     );
   }

@@ -38,9 +38,12 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_items.isEmpty) {
-      return const Center(child: Text('è¿˜æ²¡æœ‰è´¦å•\nç‚¹å‡»å³ä¸‹è§’ + è®°ä¸€ç¬”', textAlign: TextAlign.center));
+      return const Center(
+          child: Text('»¹Ã»ÓĞÕËµ¥\nµã»÷ÓÒÏÂ½Ç + ¼ÇÒ»±Ê', textAlign: TextAlign.center));
     }
     return RefreshIndicator(
       onRefresh: _reload,
@@ -50,20 +53,25 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
         itemBuilder: (context, i) {
           final t = _items[i];
           final color = t.type == 'expense' ? Colors.red : Colors.green;
-          final isAuto = t.isAuto && !t.isEdited;
           return ListTile(
             leading: CircleAvatar(
-              backgroundColor: color.withOpacity(0.12),
-              child: Icon(t.type == 'expense' ? Icons.arrow_upward : Icons.arrow_downward, color: color),
+              backgroundColor: color.withValues(alpha: 0.12),
+              child: Icon(
+                t.type == 'expense' ? Icons.arrow_upward : Icons.arrow_downward,
+                color: color,
+              ),
             ),
             title: Text(t.category),
-            subtitle: Text('${t.date.year}-${t.date.month.toString().padLeft(2,'0')}-${t.date.day.toString().padLeft(2,'0')} ${t.date.hour.toString().padLeft(2,'0')}:${t.date.minute.toString().padLeft(2,'0')}  ${t.note ?? ''}'),
+            subtitle: Text(
+                '${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')} ${t.date.hour.toString().padLeft(2, '0')}:${t.date.minute.toString().padLeft(2, '0')}  ${t.note ?? ''}'),
             trailing: Text(
               '${t.type == 'expense' ? '-' : '+'}${t.amount.toStringAsFixed(2)}',
               style: TextStyle(color: color, fontWeight: FontWeight.bold),
             ),
             onTap: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => AddEditScreen(transaction: t)));
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => AddEditScreen(transaction: t)));
               _reload();
             },
             onLongPress: () => _confirmDelete(t),
@@ -77,11 +85,15 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('åˆ é™¤è´¦å•'),
-        content: Text('ç¡®å®šåˆ é™¤ ${t.category} ${t.amount.toStringAsFixed(2)} å—ï¼Ÿ'),
+        title: const Text('É¾³ıÕËµ¥'),
+        content:
+            Text('È·¶¨É¾³ı ${t.category} ${t.amount.toStringAsFixed(2)} Âğ£¿'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('å–æ¶ˆ')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('åˆ é™¤')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('È¡Ïû')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true), child: const Text('É¾³ı')),
         ],
       ),
     ).then((ok) async {

@@ -1,5 +1,5 @@
 import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite/sqflite.dart' hide Transaction;
 
 import '../models/transaction.dart';
 
@@ -41,7 +41,7 @@ CREATE TABLE transactions(
   Future<List<Transaction>> getTransactions() async {
     final db = await database;
     final rows = await db.query('transactions', orderBy: 'date DESC');
-    return rows.map(Transaction.fromMap).toList();
+    return rows.map((r) => Transaction.fromMap(r as Map<String, dynamic>)).toList();
   }
 
   Future<int> insertTransaction(Transaction t) async {
@@ -53,14 +53,14 @@ CREATE TABLE transactions(
     final db = await database;
     final batch = db.batch();
     for (final t in list) {
-      batch.insert('transactions', t.toMap());
+      batch.insert('transactions', t.toMap() as Map<String, Object?>);
     }
     await batch.commit(noResult: true);
   }
 
   Future<int> updateTransaction(Transaction t) async {
     final db = await database;
-    return db.update('transactions', t.toMap(), where: 'id = ?', whereArgs: [t.id]);
+    return db.update('transactions', t.toMap() as Map<String, Object?>, where: 'id = ?', whereArgs: [t.id]);
   }
 
   Future<int> deleteTransaction(int id) async {

@@ -53,7 +53,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                 controller: _amountCtrl,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: '金额', prefixText: '¥ '),
-                validator: (v) => v == null || double.tryParse(v) == null || double.parse(v) <= 0 ? '请输入有效金额' : null,
+                validator: (v) => v == null || double.tryParse(v) == null || double.parse(v) <= 0 ? '请输入有效金�? : null,
               ),
               TextFormField(
                 controller: _categoryCtrl,
