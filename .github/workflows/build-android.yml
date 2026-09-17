@@ -34,6 +34,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Preserve custom source
+        run: |
+          mkdir -p /tmp/remember_src
+          cp -r lib/. /tmp/remember_src/
+
+      - name: Scaffold missing platform folders
+        run: flutter create --platforms=android --project-name remember_app --org com.example .
+
+      - name: Restore custom source
+        run: |
+          rm -rf lib
+          mkdir -p lib
+          cp -r /tmp/remember_src/. lib/
+
       - name: Install dependencies
         run: flutter pub get
 
