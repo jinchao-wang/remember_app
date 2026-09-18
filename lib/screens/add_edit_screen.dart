@@ -103,7 +103,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
             TextFormField(
               controller: _amountController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              autofocus: true,
+              autofocus: false,
               decoration: const InputDecoration(
                 labelText: '金额',
                 prefixText: '¥ ',
@@ -165,7 +165,23 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ),
               maxLines: 3,
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: Text(
+                  widget.transaction == null ? '记录账单' : '保存修改',
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
