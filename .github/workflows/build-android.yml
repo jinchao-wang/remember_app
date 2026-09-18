@@ -48,6 +48,10 @@ jobs:
           mkdir -p lib
           cp -r /tmp/remember_src/. lib/
 
+      - name: Update compileSdk to 35
+        run: |
+          sed -i 's/compileSdk = 34/compileSdk = 35/' android/app/build.gradle
+
       - name: Install dependencies
         run: flutter pub get
 
