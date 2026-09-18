@@ -122,54 +122,55 @@ class _TransactionListScreenState extends State<TransactionListScreen>
                 child: ListView.separated(
                   padding: const EdgeInsets.all(16),
                   itemCount: _filteredList.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (ctx, i) {
-                  final t = _filteredList[i];
-                  return Dismissible(
-                    key: Key('${t.id}-${t.date.millisecondsSinceEpoch}'),
-                    direction: DismissDirection.endToStart,
-                    confirmDismiss: (_) async {
-                      await _delete(t);
-                      return false;
-                    },
-                    background: Container(
-                      alignment: Alignment.centerRight,
-                      padding: const EdgeInsets.only(right: 24),
-                      color: Colors.red,
-                      child: const Icon(Icons.delete, color: Colors.white),
-                    ),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: _categoryColor(t.category),
-                        child: Icon(
-                          parseTransactionType(t.type).icon,
-                          color: Colors.white,
-                          size: 20,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (ctx, i) {
+                    final t = _filteredList[i];
+                    return Dismissible(
+                      key: Key('${t.id}-${t.date.millisecondsSinceEpoch}'),
+                      direction: DismissDirection.endToStart,
+                      confirmDismiss: (_) async {
+                        await _delete(t);
+                        return false;
+                      },
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 24),
+                        color: Colors.red,
+                        child: const Icon(Icons.delete, color: Colors.white),
+                      ),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: _categoryColor(t.category),
+                          child: Icon(
+                            parseTransactionType(t.type).icon,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                         ),
-                      ),
-                      title: Text(
-                        t.category,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Text(
-                        '${DateFormat('yyyy-MM-dd').format(t.date)} · ${t.note ?? ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Text(
-                        '${t.type == 'income' ? '+' : '-'}¥${t.amount.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: t.type == 'income' ? Colors.green : Colors.red,
+                        title: Text(
+                          t.category,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
+                        subtitle: Text(
+                          '${DateFormat('yyyy-MM-dd').format(t.date)} · ${t.note ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Text(
+                          '${t.type == 'income' ? '+' : '-'}¥${t.amount.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: t.type == 'income' ? Colors.green : Colors.red,
+                          ),
+                        ),
+                        onTap: () => _showEditSheet(t),
                       ),
-                      onTap: () => _showEditSheet(t),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

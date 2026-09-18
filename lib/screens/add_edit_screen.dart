@@ -15,7 +15,6 @@ class AddEditScreen extends StatefulWidget {
 }
 
 class _AddEditScreenState extends State<AddEditScreen> {
-  final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
@@ -102,73 +101,72 @@ class _AddEditScreenState extends State<AddEditScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextFormField(
-                controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: '金额',
-                  prefixText: '¥ ',
-                  border: OutlineInputBorder(),
-                  hintText: '请输入金额',
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) return '请输入金额';
-                  final amount = double.tryParse(value);
-                  if (amount == null || amount <= 0) return '请输入有效的金额（大于0）';
-                  return null;
-                },
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: '金额',
+                prefixText: '¥ ',
+                border: OutlineInputBorder(),
+                hintText: '请输入金额',
               ),
-              const SizedBox(height: 20),
-              DropdownButtonFormField<String>(
-                value: _type,
-                items: TransactionType.values.map((t) {
-                  return DropdownMenuItem(
-                    value: t.value,
-                    child: Row(children: [Icon(t.icon, size: 18), const SizedBox(width: 8), Text(t.label)]),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() => _type = v ?? 'expense'),
-                decoration: const InputDecoration(labelText: '类型', border: OutlineInputBorder()),
+              validator: (value) {
+                if (value == null || value.isEmpty) return '请输入金额';
+                final amount = double.tryParse(value);
+                if (amount == null || amount <= 0) return '请输入有效的金额（大于0）';
+                return null;
+              },
+            ),
+            const SizedBox(height: 20),
+            DropdownButtonFormField<String>(
+              value: _type,
+              items: TransactionType.values.map((t) {
+                return DropdownMenuItem(
+                  value: t.value,
+                  child: Row(children: [Icon(t.icon, size: 18), const SizedBox(width: 8), Text(t.label)]),
+                );
+              }).toList(),
+              onChanged: (v) => setState(() => _type = v ?? 'expense'),
+              decoration: const InputDecoration(labelText: '类型', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 20),
+            DropdownButtonFormField<String>(
+              value: _category,
+              items: Categories.names().map((c) {
+                return DropdownMenuItem(
+                  value: c,
+                  child: Row(children: [Icon(Categories.iconOf(c), size: 18), const SizedBox(width: 8), Text(c)]),
+                );
+              }).toList(),
+              onChanged: (c) => setState(() => _category = c ?? '餐饮'),
+              decoration: const InputDecoration(labelText: '分类', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 20),
+            ListTile(
+              title: const Text('日期'),
+              subtitle: Text(DateFormat('yyyy-MM-dd').format(_selectedDate)),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _selectedDate,
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2101),
+                );
+                if (picked != null) setState(() => _selectedDate = picked);
+              },
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _noteController,
+              decoration: const InputDecoration(
+                labelText: '备注',
+                border: OutlineInputBorder(),
+                hintText: '选填',
               ),
-              const SizedBox(height: 20),
-              DropdownButtonFormField<String>(
-                value: _category,
-                items: Categories.names().map((c) {
-                  return DropdownMenuItem(
-                    value: c,
-                    child: Row(children: [Icon(Categories.iconOf(c), size: 18), const SizedBox(width: 8), Text(c)]),
-                  );
-                }).toList(),
-                onChanged: (c) => setState(() => _category = c ?? '餐饮'),
-                decoration: const InputDecoration(labelText: '分类', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 20),
-              ListTile(
-                title: const Text('日期'),
-                subtitle: Text(DateFormat('yyyy-MM-dd').format(_selectedDate)),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _selectedDate,
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2101),
-                  );
-                  if (picked != null) setState(() => _selectedDate = picked);
-                },
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _noteController,
-                decoration: const InputDecoration(
-                  labelText: '备注',
-                  border: OutlineInputBorder(),
-                  hintText: '选填',
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 32),
-            ],
-          ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 32),
+          ],
         ),
       ),
     );
