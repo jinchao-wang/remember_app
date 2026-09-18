@@ -1,8 +1,7 @@
 ﻿import 'package:flutter/material.dart';
-import '../models/transaction.dart';
-import '../services/database.dart';
-import '../services/app_state.dart';
-import 'add_edit_screen.dart';
+import 'transaction_list_screen.dart';
+import 'stats_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -27,14 +26,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => {},
+        onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'Transactions'),
           NavigationDestination(icon: Icon(Icons.pie_chart_outline), selectedIcon: Icon(Icons.pie_chart), label: 'Stats'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
-      floatingActionButton: FloatingActionButton(onPressed: () => {}, child: const Icon(Icons.add)),
+      floatingActionButton: const FloatingActionButton(onPressed: null, child: Icon(Icons.add)),
     );
   }
 }

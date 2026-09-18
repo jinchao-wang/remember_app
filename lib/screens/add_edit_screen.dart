@@ -41,30 +41,29 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Future<void> _saveTransaction() async {
-    if (_formKey.currentState!.validate()) {
-      final amount = double.parse(_amountController.text);
-      final category = _categoryController.text;
-      final note = _noteController.text;
+    if (!_formKey.currentState!.validate()) return;
+    final amount = double.parse(_amountController.text);
+    final category = _categoryController.text;
+    final note = _noteController.text;
 
-      final newTransaction = Transaction(
-        amount: amount,
-        category: category,
-        date: _selectedDate,
-        type: _type,
-        note: note,
-      );
+    final newTransaction = Transaction(
+      amount: amount,
+      category: category,
+      date: _selectedDate,
+      type: _type,
+      note: note,
+    );
 
-      if (widget.transaction != null) {
-        newTransaction.id = widget.transaction!.id;
-        await DatabaseHelper.instance.updateTransaction(newTransaction);
-      } else {
-        await DatabaseHelper.instance.insertTransaction(newTransaction);
-      }
+    if (widget.transaction != null) {
+      newTransaction.id = widget.transaction!.id;
+      await DatabaseHelper.instance.updateTransaction(newTransaction);
+    } else {
+      await DatabaseHelper.instance.insertTransaction(newTransaction);
+    }
 
-      AppState.instance.bump();
-      if (mounted) {
-        Navigator.pop(context);
-      }
+    AppState.instance.bump();
+    if (mounted) {
+      Navigator.pop(context);
     }
   }
 
@@ -136,7 +135,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ),
               ListTile(
                 title: const Text('Date'),
-                subtitle: Text('${_selectedDate.toLocal()}'.split(' ')[0]),
+                subtitle: Text(_selectedDate.toString().split(' ').first),
                 onTap: () => _selectDate(context),
               ),
               const SizedBox(height: 16),
