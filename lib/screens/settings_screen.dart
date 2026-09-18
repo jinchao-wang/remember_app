@@ -3,7 +3,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
 import '../utils/csv_helper.dart';
@@ -27,7 +26,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _checkNotificationStatus() async {
     try {
-      final platform = const MethodChannel('remember/payment_listener');
+      const platform = MethodChannel('remember/payment_listener');
+      final ctx = context;
       final enabled = await platform.invokeMethod<bool>('isListeningEnabled');
       if (mounted) {
         setState(() {
@@ -41,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openNotificationSettings() async {
+    final ctx = context;
     try {
       const platform = MethodChannel('remember/payment_listener');
       await platform.invokeMethod('openNotificationSettings');
@@ -50,11 +51,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _exportCsv() async {
+    final ctx = context;
     try {
       final tx = await DatabaseHelper.instance.getTransactions();
       if (tx.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(ctx).showSnackBar(
           const SnackBar(content: Text('暂无账单可导出'), duration: Duration(seconds: 2)),
         );
         return;
@@ -65,18 +67,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final file = File('${dir.path}/记账导出_$stamp.csv');
       await file.writeAsString(csv);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(content: Text('已导出 ${tx.length} 条记录\n${file.path}'), duration: const Duration(seconds: 3)),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(content: Text('导出失败：$e'), duration: const Duration(seconds: 3)),
       );
     }
   }
 
   Future<void> _importCsv() async {
+    final ctx = context;
     try {
       final res = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -87,19 +90,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final list = csvToTransactions(text);
       if (list.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(ctx).showSnackBar(
           const SnackBar(content: Text('未解析到有效数据'), duration: Duration(seconds: 2)),
         );
         return;
       }
       final confirm = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
+        context: ctx,
+        builder: (inner) => AlertDialog(
           title: const Text('确认导入'),
           content: Text('即将导入 ${list.length} 条账单，是否继续？\n（重复记录将被跳过）'),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('导入')),
+            TextButton(onPressed: () => Navigator.pop(inner, false), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(inner, true), child: const Text('导入')),
           ],
         ),
       );
@@ -125,27 +128,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       AppState.instance.bump();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(content: Text('导入完成，成功导入 $imported 条记录'), duration: const Duration(seconds: 2)),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(content: Text('导入失败：$e'), duration: const Duration(seconds: 3)),
       );
     }
   }
 
   Future<void> _clearAll() async {
+    final ctx = context;
     final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
+      context: ctx,
+      builder: (inner) => AlertDialog(
         title: const Text('清空所有账单'),
         content: const Text('此操作将删除所有账单记录且不可恢复，是否继续？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(inner, false), child: const Text('取消')),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () => Navigator.pop(inner, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('确认清空'),
           ),
@@ -157,7 +161,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await db.delete('transactions');
     AppState.instance.bump();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(ctx).showSnackBar(
       const SnackBar(content: Text('所有账单已清空'), duration: Duration(seconds: 2)),
     );
   }

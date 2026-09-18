@@ -44,6 +44,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Future<void> _save() async {
     final amount = double.tryParse(_amountController.text);
     if (amount == null || amount <= 0) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请输入有效的金额（大于0）')),
       );
@@ -79,7 +80,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     }
 
     AppState.instance.bump();
-    Navigator.pop(context);
+    if (mounted) Navigator.pop(context);
   }
 
   @override

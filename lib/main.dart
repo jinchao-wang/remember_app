@@ -1,16 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:remember_app/screens/home_screen.dart';
-import 'package:remember_app/services/payment_service.dart';
-import 'package:remember_app/services/notification_listener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN', null);
-  PaymentNotificationListener.paymentStream.listen((event) {
-    PaymentService.instance.handleEvent(event);
-  });
   runApp(const RememberApp());
 }
 

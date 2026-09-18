@@ -51,8 +51,9 @@ class _TransactionListScreenState extends State<TransactionListScreen>
   }
 
   Future<void> _delete(Transaction t) async {
+    final ctx = context;
     final confirm = await showDialog<bool>(
-      context: context,
+      context: ctx,
       builder: (ctx) => AlertDialog(
         title: const Text('确认删除'),
         content: Text('确定要删除「${t.category} · ¥${t.amount.toStringAsFixed(2)}」这笔账单吗？'),
@@ -70,7 +71,7 @@ class _TransactionListScreenState extends State<TransactionListScreen>
       await DatabaseHelper.instance.deleteTransaction(t.id!);
       AppState.instance.bump();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(ctx).showSnackBar(
           const SnackBar(content: Text('已删除'), duration: Duration(seconds: 1)),
         );
       }
@@ -139,7 +140,7 @@ class _TransactionListScreenState extends State<TransactionListScreen>
                       leading: CircleAvatar(
                         backgroundColor: _categoryColor(t.category),
                         child: Icon(
-                          TransactionType.fromValue(t.type).icon,
+                          parseTransactionType(t.type).icon,
                           color: Colors.white,
                           size: 20,
                         ),
@@ -254,9 +255,12 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
   }
 
   Future<void> _save() async {
+    final ctx = context;
+    final navigator = Navigator.of(ctx);
+    final snackBar = ScaffoldMessenger.of(ctx);
     final amount = double.tryParse(_amountController.text);
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      snackBar.showSnackBar(
         const SnackBar(content: Text('请输入有效的金额')),
       );
       return;
@@ -273,7 +277,7 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
 
     await DatabaseHelper.instance.updateTransaction(updated);
     AppState.instance.bump();
-    Navigator.pop(context);
+    if (mounted) navigator.pop();
   }
 
   @override
