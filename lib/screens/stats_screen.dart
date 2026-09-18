@@ -235,7 +235,10 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
             else
               Column(
                 children: [
-                  SizedBox(height: 220, child: PieChart(_buildPieData(catExpense))),
+                  SizedBox(
+                    height: 220,
+                    child: PieChart(_buildPieData(catExpense)),
+                  ),
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 16,
@@ -245,12 +248,19 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Container(width: 12, height: 12, decoration: BoxDecoration(
-                            color: Colors.primaries[catExpense.keys.toList().indexOf(e.key) % Colors.primaries.length],
-                            borderRadius: BorderRadius.circular(2),
-                          )),
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: Colors.primaries[
+                                  catExpense.keys.toList().indexOf(e.key) %
+                                      Colors.primaries.length],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
                           const SizedBox(width: 6),
-                          Text('${e.key} ${_fmt(e.value)} ($pct%)', style: const TextStyle(fontSize: 12)),
+                          Text('${e.key} ${_fmt(e.value)} ($pct%)',
+                              style: const TextStyle(fontSize: 12)),
                         ],
                       );
                     }).toList(),
@@ -300,7 +310,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                   maxY: maxY,
                   lineTouchData: LineTouchData(
                     touchTooltipData: LineTouchTooltipData(
-                      getTooltipColor: (touchedSpot) => Colors.blueGrey.withOpacity(0.8),
+                      getTooltipColor: (touchedSpot) => Colors.blueGrey,
                       getTooltipItems: (spots) => spots.map((s) {
                         return LineTooltipItem(
                           '${s.x.toInt() + 1}日\n${_fmt(s.y)}',

@@ -84,8 +84,7 @@ class _TransactionListScreenState extends State<TransactionListScreen>
   }
 
   Color _categoryColor(String category) {
-    final colors = Colors.primaries;
-    return colors[category.hashCode.abs() % colors.length];
+    return Colors.primaries[category.hashCode.abs() % Colors.primaries.length];
   }
 
   @override

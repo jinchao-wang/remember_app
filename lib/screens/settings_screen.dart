@@ -3,9 +3,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
 import '../utils/csv_helper.dart';
+import '../models/enums.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -26,8 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _checkNotificationStatus() async {
     try {
-      const platform = MethodChannel('remember/payment_listener');
-      final ctx = context;
+      final platform = MethodChannel('remember/payment_listener');
       final enabled = await platform.invokeMethod<bool>('isListeningEnabled');
       if (mounted) {
         setState(() {
@@ -41,9 +42,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openNotificationSettings() async {
-    final ctx = context;
     try {
-      const platform = MethodChannel('remember/payment_listener');
+      final platform = MethodChannel('remember/payment_listener');
       await platform.invokeMethod('openNotificationSettings');
     } catch (e) {
       debugPrint('无法打开通知设置：$e');

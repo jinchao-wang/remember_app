@@ -25,3 +25,26 @@ TransactionType parseTransactionType(String? value) =>
       'income' => TransactionType.income,
       _ => TransactionType.expense,
     };
+
+/// 默认分类与图标
+class Categories {
+  static const List<Map<String, IconData>> all = [
+    {'餐饮': Icons.food_bank},
+    {'交通': Icons.directions_bus},
+    {'购物': Icons.shopping_cart},
+    {'日用': Icons.home},
+    {'娱乐': Icons.movie},
+    {'医疗': Icons.medical_services},
+    {'教育': Icons.school},
+    {'旅行': Icons.airplanemode_active},
+    {'转账': Icons.account_balance_wallet},
+    {'其他': Icons.category},
+  ];
+
+  static List<String> names() => all.map((e) => e.keys.first).toList();
+
+  static IconData iconOf(String name) => all
+      .firstWhere((e) => e.keys.first == name, orElse: () => {'其他': Icons.category})
+      .values
+      .first;
+}
