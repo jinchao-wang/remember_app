@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter --version)",
+      "Read(//c/flutter/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//c/Users/zktt/flutter/bin/**)",
+      "Bash(powershell -Command \"Get-Command flutter -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git --version)",
+      "Bash(git push *)",
+      "Bash(dart format *)",
+      "Bash(flutter format *)",
+      "Read(//usr/bin/**)",
+      "Read(//opt/flutter/bin/**)"
+    ]
+  }
+}
