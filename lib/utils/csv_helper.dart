@@ -34,13 +34,17 @@ List<Transaction> csvToTransactions(String csv) {
 
   return rows.skip(1).where((r) => r.length >= 5 && r[1] is num).map((r) {
     final idRaw = r[0];
+    final dateRaw = r[5]?.toString() ?? '';
+    final date = dateRaw.isNotEmpty
+        ? (DateTime.tryParse(dateRaw) ?? DateTime.now())
+        : DateTime.now();
     return Transaction(
       id: idRaw is num ? idRaw.toInt() : null,
       amount: (r[1] as num).toDouble(),
       type: r[2].toString(),
       category: r[3].toString(),
       note: r.length > 4 ? (r[4]?.toString().isEmpty ?? true ? null : r[4].toString()) : null,
-      date: DateTime.tryParse(r[5].toString()) ?? DateTime.now(),
+      date: date,
       isAuto: truthy(r, 6),
       isEdited: truthy(r, 7),
       sourceApp: r.length > 8 ? r[8].toString() : null,

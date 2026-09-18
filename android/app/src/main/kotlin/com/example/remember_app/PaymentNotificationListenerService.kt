@@ -1,6 +1,11 @@
 package com.example.remember_app
 
-import android.app.Notification
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -41,9 +46,30 @@ class PaymentNotificationListenerService : NotificationListenerService() {
         return null
     }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.i(TAG, "通知监听已连接")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w(TAG, "通知监听已断开")
+    }
+
     companion object {
         private const val TAG = "PaymentListener"
         private const val TYPE_EXPENSE = "expense"
         private const val TYPE_INCOME = "income"
+
+        fun isNotificationListeningEnabled(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                val enabledListeners = Settings.Secure.getString(
+                    context.contentResolver,
+                    "enabled_notification_listeners"
+                ) ?: return false
+                return enabledListeners.contains(context.packageName)
+            }
+            return false
+        }
     }
 }
