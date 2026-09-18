@@ -81,6 +81,7 @@ class _StatsScreenState extends State<StatsScreen> {
         (lineSpots.map((s) => s.y).fold<double>(0, (a, b) => a > b ? a : b) * 1.2 +
             1);
 
+    final primary = Theme.of(context).colorScheme.primary;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -141,12 +142,12 @@ class _StatsScreenState extends State<StatsScreen> {
                               LineChartBarData(
                                 spots: lineSpots,
                                 isCurved: true,
-                                color: Theme.of(context).colorScheme.primary,
+                                color: primary,
                                 barWidth: 2,
                                 dotData: const FlDotData(show: false),
                                 belowBarData: BarAreaData(
                                     show: true,
-                                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)),
+                                    color: primary.withOpacity(0.1)),
                               )
                             ],
                           ),

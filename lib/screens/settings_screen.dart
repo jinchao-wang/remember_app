@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/app_state.dart';
-import '../models/transaction.dart';
-import '../services/database.dart';
 import '../utils/csv_helper.dart';
 
 class SettingsScreen extends StatefulWidget {

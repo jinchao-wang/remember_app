@@ -1,115 +1,153 @@
 ﻿import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../models/transaction.dart';
-import '../services/app_state.dart';
 import '../services/database.dart';
+import '../services/app_state.dart';
 
 class AddEditScreen extends StatefulWidget {
   final Transaction? transaction;
+
   const AddEditScreen({super.key, this.transaction});
+
   @override
   State<AddEditScreen> createState() => _AddEditScreenState();
 }
 
 class _AddEditScreenState extends State<AddEditScreen> {
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _amountCtrl;
-  late TextEditingController _categoryCtrl;
-  late TextEditingController _noteCtrl;
+  final _amountController = TextEditingController();
+  final _categoryController = TextEditingController();
+  final _noteController = TextEditingController();
+  DateTime _selectedDate = DateTime.now();
   String _type = 'expense';
-  DateTime _date = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _amountCtrl = TextEditingController(text: widget.transaction?.amount.toString() ?? '');
-    _categoryCtrl = TextEditingController(text: widget.transaction?.category ?? '');
-    _noteCtrl = TextEditingController(text: widget.transaction?.note ?? '');
-    _type = widget.transaction?.type ?? 'expense';
-    _date = widget.transaction?.date ?? DateTime.now();
+    if (widget.transaction != null) {
+      _amountController.text = widget.transaction!.amount.toString();
+      _categoryController.text = widget.transaction!.category;
+      _noteController.text = widget.transaction!.note ?? '';
+      _selectedDate = widget.transaction!.date;
+      _type = widget.transaction!.type ?? 'expense';
+    }
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _categoryController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveTransaction() async {
+    if (_formKey.currentState!.validate()) {
+      final amount = double.parse(_amountController.text);
+      final category = _categoryController.text;
+      final note = _noteController.text;
+
+      final newTransaction = Transaction(
+        amount: amount,
+        category: category,
+        date: _selectedDate,
+        type: _type,
+        note: note,
+      );
+
+      if (widget.transaction != null) {
+        newTransaction.id = widget.transaction!.id;
+        await DatabaseHelper.instance.updateTransaction(newTransaction);
+      } else {
+        await DatabaseHelper.instance.insertTransaction(newTransaction);
+      }
+
+      AppState.instance.bump();
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2101),
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.transaction != null;
     return Scaffold(
-      appBar: AppBar(title: Text(isEdit ? 'Edit Transaction' : 'Add Transaction')),
+      appBar: AppBar(title: Text(widget.transaction == null ? 'Add Transaction' : 'Edit Transaction')),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16.0),
         child: Form(
           key: _formKey,
-          child: ListView(
+          child: Column(
             children: [
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'expense', label: Text('Expense')),
-                  ButtonSegment(value: 'income', label: Text('Income')),
-                ],
-                selected: {_type},
-                onSelectionChanged: (s) => setState(() => _type = s.first),
+              TextFormField(
+                controller: _amountController,
+                decoration: const InputDecoration(labelText: 'Amount'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter an amount';
+                  }
+                  if (double.tryParse(value) == null) {
+                    return 'Please enter a valid number';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
               TextFormField(
-                controller: _amountCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Amount', prefixText: '¥ '),
-                validator: (v) => v == null || double.tryParse(v) == null || double.parse(v) <= 0 ? 'Please enter a valid amount' : null,
-              ),
-              TextFormField(
-                controller: _categoryCtrl,
+                controller: _categoryController,
                 decoration: const InputDecoration(labelText: 'Category'),
-                validator: (v) => v == null || v.trim().isEmpty ? 'Category cannot be empty' : null,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter a category';
+                  }
+                  return null;
+                },
               ),
-              TextFormField(controller: _noteCtrl, decoration: const InputDecoration(labelText: 'Note (optional)')),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _noteController,
+                decoration: const InputDecoration(labelText: 'Note'),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                title: const Text('Type'),
+                trailing: Switch(
+                  value: _type == 'income',
+                  onChanged: (value) {
+                    setState(() {
+                      _type = value ? 'income' : 'expense';
+                    });
+                  },
+                ),
+              ),
               ListTile(
                 title: const Text('Date'),
-                subtitle: Text(DateFormat('yyyy-MM-dd HH:mm').format(_date)),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: _pickDate,
+                subtitle: Text('${_selectedDate.toLocal()}'.split(' ')[0]),
+                onTap: () => _selectDate(context),
               ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _save,
-                child: Text(isEdit ? 'Save Changes' : 'Add Transaction'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _saveTransaction,
+                child: const Text('Save'),
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  Future<void> _pickDate() async {
-    final date = await showDatePicker(context: context, initialDate: _date, firstDate: DateTime(2020), lastDate: DateTime(2100));
-    if (date != null) {
-      final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(_date));
-      if (time != null) {
-        setState(() => _date = DateTime(date.year, date.month, date.day, time.hour, time.minute));
-      }
-    }
-  }
-
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    final amount = double.parse(_amountCtrl.text);
-    final newTx = Transaction(
-      id: widget.transaction?.id,
-      amount: amount,
-      type: _type,
-      category: _categoryCtrl.text.trim(),
-      note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
-      date: _date,
-      isAuto: widget.transaction?.isAuto ?? false,
-      isEdited: true,
-      sourceApp: widget.transaction?.sourceApp,
-    );
-    if (widget.transaction != null) {
-      await DatabaseHelper.instance.updateTransaction(newTx);
-    } else {
-      await DatabaseHelper.instance.insertTransaction(newTx);
-    }
-    AppState.instance.bump();
-    if (mounted) Navigator.pop(context);
   }
 }
