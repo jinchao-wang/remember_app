@@ -1,7 +1,7 @@
-﻿import 'package:flutter/material.dart';
-import '../models/transaction.dart';
-import '../services/database.dart';
-import '../services/app_state.dart';
+﻿import "package:flutter/material.dart";
+import "../models/transaction.dart";
+import "../services/database.dart";
+import "../services/app_state.dart";
 
 class AddEditScreen extends StatefulWidget {
   final Transaction? transaction;
@@ -18,7 +18,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   final _categoryController = TextEditingController();
   final _noteController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
-  String _type = 'expense';
+  String _type = "expense";
 
   @override
   void initState() {
@@ -26,9 +26,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
     if (widget.transaction != null) {
       _amountController.text = widget.transaction!.amount.toString();
       _categoryController.text = widget.transaction!.category;
-      _noteController.text = widget.transaction!.note ?? '';
+      _noteController.text = widget.transaction!.note ?? "";
       _selectedDate = widget.transaction!.date;
-      _type = widget.transaction!.type ?? 'expense';
+      _type = widget.transaction!.type ?? "expense";
     }
   }
 
@@ -84,7 +84,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.transaction == null ? 'Add Transaction' : 'Edit Transaction')),
+      appBar: AppBar(title: Text(widget.transaction == null ? "Add Transaction" : "Edit Transaction")),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -93,14 +93,14 @@ class _AddEditScreenState extends State<AddEditScreen> {
             children: [
               TextFormField(
                 controller: _amountController,
-                decoration: const InputDecoration(labelText: 'Amount'),
+                decoration: const InputDecoration(labelText: "Amount"),
                 keyboardType: TextInputType.number,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter an amount';
+                    return "Please enter an amount";
                   }
                   if (double.tryParse(value) == null) {
-                    return 'Please enter a valid number';
+                    return "Please enter a valid number";
                   }
                   return null;
                 },
@@ -108,10 +108,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _categoryController,
-                decoration: const InputDecoration(labelText: 'Category'),
+                decoration: const InputDecoration(labelText: "Category"),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter a category';
+                    return "Please enter a category";
                   }
                   return null;
                 },
@@ -119,29 +119,29 @@ class _AddEditScreenState extends State<AddEditScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _noteController,
-                decoration: const InputDecoration(labelText: 'Note'),
+                decoration: const InputDecoration(labelText: "Note"),
               ),
               const SizedBox(height: 16),
               ListTile(
-                title: const Text('Type'),
+                title: const Text("Type"),
                 trailing: Switch(
-                  value: _type == 'income',
+                  value: _type == "income",
                   onChanged: (value) {
                     setState(() {
-                      _type = value ? 'income' : 'expense';
+                      _type = value ? "income" : "expense";
                     });
                   },
                 ),
               ),
               ListTile(
-                title: const Text('Date'),
-                subtitle: Text(_selectedDate.toString().split(' ').first),
+                title: const Text("Date"),
+                subtitle: Text(_selectedDate.toString().split(" ").first),
                 onTap: () => _selectDate(context),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _saveTransaction,
-                child: const Text('Save'),
+                child: const Text("Save"),
               ),
             ],
           ),
