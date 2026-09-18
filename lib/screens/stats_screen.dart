@@ -48,7 +48,8 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
 
   List<Transaction> _monthTx() {
     return _all
-        .where((t) => t.date.year == _selectedMonth.year && t.date.month == _selectedMonth.month)
+        .where((t) => t.date.year == _selectedMonth.year)
+        .where((t) => t.date.month == _selectedMonth.month)
         .toList();
   }
 

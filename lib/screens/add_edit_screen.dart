@@ -31,6 +31,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
       _selectedDate = widget.transaction!.date;
       _type = widget.transaction!.type;
       _category = widget.transaction!.category;
+    } else {
+      _selectedDate = DateTime.now();
     }
   }
 
@@ -42,10 +44,12 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Future<void> _save() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final amount = double.tryParse(_amountController.text);
     if (amount == null || amount <= 0) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('请输入有效的金额（大于0）')),
       );
       return;
@@ -65,22 +69,18 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
     if (widget.transaction != null) {
       await DatabaseHelper.instance.updateTransaction(newTransaction);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('账单已更新')),
-        );
-      }
     } else {
       await DatabaseHelper.instance.insertTransaction(newTransaction);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('账单已记录')),
-        );
-      }
     }
-
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(widget.transaction != null ? '账单已更新' : '账单已记录'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
     AppState.instance.bump();
-    if (mounted) Navigator.pop(context);
+    navigator.pop();
   }
 
   @override
@@ -96,16 +96,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextFormField(
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextFormField(
                 controller: _amountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                autofocus: true,
                 decoration: const InputDecoration(
                   labelText: '金额',
                   prefixText: '¥ ',
@@ -137,13 +136,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                 items: Categories.names().map((c) {
                   return DropdownMenuItem(
                     value: c,
-                    child: Row(
-                      children: [
-                        Icon(Categories.iconOf(c), size: 18),
-                        const SizedBox(width: 8),
-                        Text(c),
-                      ],
-                    ),
+                    child: Row(children: [Icon(Categories.iconOf(c), size: 18), const SizedBox(width: 8), Text(c)]),
                   );
                 }).toList(),
                 onChanged: (c) => setState(() => _category = c ?? '餐饮'),

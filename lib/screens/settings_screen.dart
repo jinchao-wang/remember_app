@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
 import '../utils/csv_helper.dart';
-import '../models/enums.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -19,6 +18,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _listening = false;
   bool _checking = true;
+  static const _platform = MethodChannel('remember/payment_listener');
 
   @override
   void initState() {
@@ -28,8 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _checkNotificationStatus() async {
     try {
-      final platform = MethodChannel('remember/payment_listener');
-      final enabled = await platform.invokeMethod<bool>('isListeningEnabled');
+      final enabled = await _platform.invokeMethod<bool>('isListeningEnabled');
       if (mounted) {
         setState(() {
           _listening = enabled ?? false;
@@ -43,8 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _openNotificationSettings() async {
     try {
-      final platform = MethodChannel('remember/payment_listener');
-      await platform.invokeMethod('openNotificationSettings');
+      await _platform.invokeMethod('openNotificationSettings');
     } catch (e) {
       debugPrint('无法打开通知设置：$e');
     }

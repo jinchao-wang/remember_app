@@ -95,30 +95,33 @@ class _TransactionListScreenState extends State<TransactionListScreen>
     }
 
     return Scaffold(
-      body: Column(
-        children: [
-          _buildFilterBar(),
-          if (_filteredList.isEmpty)
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
-                    Text(
-                      _list.isEmpty ? '还没有账单记录' : '该分类暂无记录',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 16),
-                    ),
-                  ],
+      body: RefreshIndicator(
+        onRefresh: _reload,
+        child: Column(
+          children: [
+            _buildFilterBar(),
+            if (_filteredList.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey[400]),
+                      const SizedBox(height: 16),
+                      Text(
+                        _list.isEmpty ? '还没有账单记录\n点右下角 + 记一笔' : '该分类暂无记录',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            )
-          else
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemCount: _filteredList.length,
+              )
+            else
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _filteredList.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (ctx, i) {
                   final t = _filteredList[i];
@@ -254,12 +257,12 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
   }
 
   Future<void> _save() async {
-    final ctx = context;
-    final navigator = Navigator.of(ctx);
-    final snackBar = ScaffoldMessenger.of(ctx);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final amount = double.tryParse(_amountController.text);
     if (amount == null || amount <= 0) {
-      snackBar.showSnackBar(
+      if (!mounted) return;
+      messenger.showSnackBar(
         const SnackBar(content: Text('请输入有效的金额')),
       );
       return;
@@ -276,7 +279,11 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
 
     await DatabaseHelper.instance.updateTransaction(updated);
     AppState.instance.bump();
-    if (mounted) navigator.pop();
+    if (!mounted) return;
+    messenger.showSnackBar(
+      const SnackBar(content: Text('账单已更新'), duration: Duration(seconds: 1)),
+    );
+    navigator.pop();
   }
 
   @override
