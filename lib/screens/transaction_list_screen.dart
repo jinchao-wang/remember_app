@@ -41,19 +41,22 @@ class _TransactionListScreenState extends State<TransactionListScreen>
     if (!mounted) return;
     setState(() {
       _list = widget.selectedDate != null
-          ? tx.where((t) => t.date.year == widget.selectedDate!.year &&
-                  t.date.month == widget.selectedDate!.month &&
-                  t.date.day == widget.selectedDate!.day)
-              .toList()
+          ? tx.where((t) => _isSameDay(t, widget.selectedDate!)).toList()
           : tx;
       _loading = false;
     });
   }
 
+  bool _isSameDay(Transaction t, DateTime date) =>
+      t.date.year == date.year &&
+      t.date.month == date.month &&
+      t.date.day == date.day;
+
   Future<void> _delete(Transaction t) async {
-    final ctx = context;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final confirm = await showDialog<bool>(
-      context: ctx,
+      context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('确认删除'),
         content: Text('确定要删除「${t.category} · ¥${t.amount.toStringAsFixed(2)}」这笔账单吗？'),
@@ -70,11 +73,10 @@ class _TransactionListScreenState extends State<TransactionListScreen>
     if (confirm == true) {
       await DatabaseHelper.instance.deleteTransaction(t.id!);
       AppState.instance.bump();
-      if (mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          const SnackBar(content: Text('已删除'), duration: Duration(seconds: 1)),
-        );
-      }
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('已删除'), duration: Duration(seconds: 1)),
+      );
     }
   }
 
@@ -87,88 +89,69 @@ class _TransactionListScreenState extends State<TransactionListScreen>
     return Colors.primaries[category.hashCode.abs() % Colors.primaries.length];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  double _sum(List<Transaction> list, String type) =>
+      list.where((t) => t.type == type).fold(0.0, (a, b) => a + b.amount);
 
-    return Scaffold(
-      body: RefreshIndicator(
-        onRefresh: _reload,
-        child: Column(
+  DateTime get _summaryDate => widget.selectedDate ?? DateTime.now();
+
+  Widget _summaryTile({
+    required String label,
+    required String value,
+    required Color color,
+    required IconData icon,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            _buildFilterBar(),
-            if (_filteredList.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey[400]),
-                      const SizedBox(height: 16),
-                      Text(
-                        _list.isEmpty ? '还没有账单记录\n点右下角 + 记一笔' : '该分类暂无记录',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey[500], fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _filteredList.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (ctx, i) {
-                    final t = _filteredList[i];
-                    return Dismissible(
-                      key: Key('${t.id}-${t.date.millisecondsSinceEpoch}'),
-                      direction: DismissDirection.endToStart,
-                      confirmDismiss: (_) async {
-                        await _delete(t);
-                        return false;
-                      },
-                      background: Container(
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: 24),
-                        color: Colors.red,
-                        child: const Icon(Icons.delete, color: Colors.white),
-                      ),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: _categoryColor(t.category),
-                          child: Icon(
-                            parseTransactionType(t.type).icon,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                        title: Text(
-                          t.category,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          '${DateFormat('yyyy-MM-dd').format(t.date)} · ${t.note ?? ''}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Text(
-                          '${t.type == 'income' ? '+' : '-'}¥${t.amount.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: t.type == 'income' ? Colors.green : Colors.red,
-                          ),
-                        ),
-                        onTap: () => _showEditSheet(t),
-                      ),
-                    );
-                  },
-                ),
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  Widget _buildSummaryCard() {
+    final dayTx = _list.where((t) => _isSameDay(t, _summaryDate)).toList();
+    final expense = _sum(dayTx, 'expense');
+    final income = _sum(dayTx, 'income');
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Expanded(
+              child: _summaryTile(
+                label: DateFormat('M月d日').format(_summaryDate),
+                value: '${dayTx.length} 笔',
+                color: Theme.of(context).colorScheme.primary,
+                icon: Icons.receipt_long,
               ),
+            ),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: _summaryTile(
+                label: '支出',
+                value: '¥${expense.toStringAsFixed(2)}',
+                color: Colors.red,
+                icon: Icons.arrow_downward,
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: _summaryTile(
+                label: '收入',
+                value: '¥${income.toStringAsFixed(2)}',
+                color: Colors.green,
+                icon: Icons.arrow_upward,
+              ),
+            ),
           ],
         ),
       ),
@@ -206,6 +189,110 @@ class _TransactionListScreenState extends State<TransactionListScreen>
         color: isSelected
             ? Theme.of(context).colorScheme.onPrimaryContainer
             : Colors.black54,
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            _list.isEmpty ? '还没有账单记录\n点右下角 + 记一笔' : '该分类暂无记录',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[500], fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final items = <Widget>[
+      _buildFilterBar(),
+      _buildSummaryCard(),
+      const SizedBox(height: 12),
+    ];
+
+    if (_filteredList.isEmpty) {
+      items.add(_buildEmptyState());
+    } else {
+      items.addAll(_filteredList.map(_buildTransactionItem).toList());
+    }
+
+    return Scaffold(
+      body: RefreshIndicator(
+        onRefresh: _reload,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          children: items,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTransactionItem(Transaction t) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Dismissible(
+        key: Key('${t.id}-${t.date.millisecondsSinceEpoch}'),
+        direction: DismissDirection.horizontal,
+        confirmDismiss: (direction) async {
+          if (direction == DismissDirection.startToEnd) {
+            _showEditSheet(t);
+            return false;
+          }
+          await _delete(t);
+          return false;
+        },
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 24),
+          decoration: const BoxDecoration(color: Colors.red),
+          child: const Icon(Icons.delete, color: Colors.white),
+        ),
+        secondaryBackground: Container(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 24),
+          decoration: const BoxDecoration(color: Colors.green),
+          child: const Icon(Icons.edit, color: Colors.white),
+        ),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: _categoryColor(t.category),
+            child: Icon(
+              parseTransactionType(t.type).icon,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          title: Text(
+            t.category,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            '${DateFormat('yyyy-MM-dd').format(t.date)} · ${t.note ?? ''}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Text(
+            '${t.type == 'income' ? '+' : '-'}¥${t.amount.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: t.type == 'income' ? Colors.green : Colors.red,
+            ),
+          ),
+          onTap: () => _showEditSheet(t),
+        ),
       ),
     );
   }
