@@ -54,7 +54,6 @@ class _TransactionListScreenState extends State<TransactionListScreen>
 
   Future<void> _delete(Transaction t) async {
     final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
