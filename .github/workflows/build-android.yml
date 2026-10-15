@@ -59,15 +59,17 @@ jobs:
         run: |
           flutter analyze --no-pub > analyze.txt 2>&1 && code=0 || code=$?
           cat analyze.txt
-          # 把分析结果转成 GitHub annotation，这样报错会直接显示在提交/PR 页面，
-          # 不必翻日志（step log 只有仓库管理员能下）。
-          while IFS= read -r line; do
-            echo "::error::${line}"
-          done < <(grep -E '^[[:space:]]+(error|warning)' analyze.txt || true)
+          msg=$(tail -c 3000 analyze.txt | tr '\n\r' '  ' | sed 's/%/%25/g')
+          echo "::error title=flutter analyze::${msg}"
           exit $code
 
       - name: Test
-        run: flutter test
+        run: |
+          flutter test > test.txt 2>&1 && code=0 || code=$?
+          cat test.txt
+          msg=$(tail -c 3000 test.txt | tr '\n\r' '  ' | sed 's/%/%25/g')
+          echo "::error title=flutter test::${msg}"
+          exit $code
 
       - name: Build release APK
         run: flutter build apk --release
