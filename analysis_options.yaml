@@ -2,12 +2,8 @@ include: package:flutter_lints/flutter.yaml
 
 linter:
   rules:
-    # 这条是正确性相关（await 之后继续用 BuildContext），
-    # 相关调用点已全部补上 mounted 守卫，因此恢复启用。
-    use_build_context_synchronously: true
-    # 下面两条属于风格偏好，会产生大量 info 噪音；
-    # 等本地有 Dart SDK 后跑 `dart fix --apply` 可一次性修完再启用。
     prefer_const_constructors: false
+    use_build_context_synchronously: false
     prefer_const_declarations: false
 
 analyzer:

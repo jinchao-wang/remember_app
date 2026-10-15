@@ -33,10 +33,11 @@ void main() {
         'timestamp': yesterday.millisecondsSinceEpoch,
       });
 
-      expect(event.timestamp!.toDateString(),
-          yesterday.year.toString() + '-' +
-              yesterday.month.toString().padLeft(2, '0') + '-' +
-              yesterday.day.toString().padLeft(2, '0'));
+      final ts = event.timestamp;
+      expect(ts, isNotNull);
+      expect(ts!.year, yesterday.year);
+      expect(ts.month, yesterday.month);
+      expect(ts.day, yesterday.day);
     });
 
     test('缺少可选字段时使用安全默认值', () {
