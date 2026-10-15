@@ -46,7 +46,14 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze --no-pub
+        run: |
+          flutter analyze --no-pub > analyze.txt 2>&1 && code=0 || code=$?
+          cat analyze.txt
+          # 与 Android 保持一致：分析结果转成 annotation，便于在页面直接定位。
+          while IFS= read -r line; do
+            echo "::error::${line}"
+          done < <(grep -E '^[[:space:]]+(error|warning)' analyze.txt || true)
+          exit $code
 
       - name: Test
         run: flutter test
