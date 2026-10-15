@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../models/transaction.dart';
@@ -46,11 +48,36 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
 
   String _fmt(double v) => '¥${v.toStringAsFixed(2)}';
 
+  /// 选一个「好看」的刻度间隔：把目标格数压到 1/2/5 × 10^n，
+  /// 避免旧实现 maxY>100 就固定 50 导致的刻度过密或过疏。
+  static double _niceInterval(double maxY) {
+    if (maxY <= 0) return 2;
+    final target = maxY / 5;
+    final pow = math.pow(10, (math.log(target) / math.ln10).floor()).toDouble();
+    if (!pow.isFinite || pow <= 0) return 2;
+    final norm = target / pow;
+    final step = norm <= 1 ? 1.0 : (norm <= 2 ? 2.0 : (norm <= 5 ? 5.0 : 10.0));
+    return step * pow;
+  }
+
   List<Transaction> _monthTx() {
-    return _all
-        .where((t) => t.date.year == _selectedMonth.year)
-        .where((t) => t.date.month == _selectedMonth.month)
-        .toList();
+    final y = _selectedMonth.year;
+    final m = _selectedMonth.month;
+    return _all.where((t) => t.date.year == y && t.date.month == m).toList();
+  }
+
+  /// 分类配色：深色模式下 Colors.primaries 过于刺眼，向底色靠拢一档。
+  List<Color> _paletteFor(int count) {
+    final base = Colors.primaries;
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final surface = theme.colorScheme.surface;
+    return [
+      for (var i = 0; i < count; i++)
+        dark
+            ? Color.lerp(surface, base[i % base.length], 0.72)!
+            : base[i % base.length],
+    ];
   }
 
   @override
@@ -73,20 +100,30 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
     final dayIncome = _sum(dayTx, 'income');
 
     final catExpense = <String, double>{};
-    for (final t in monthTx.where((t) => t.type == 'expense')) {
-      catExpense[t.category] = (catExpense[t.category] ?? 0) + t.amount;
+    for (final t in monthTx) {
+      if (t.type == 'expense') {
+        catExpense[t.category] = (catExpense[t.category] ?? 0) + t.amount;
+      }
     }
+    // 按金额降序，让饼图扇区顺序与图例顺序一致。
+    final catKeys = catExpense.keys.toList()
+      ..sort((a, b) => catExpense[b]!.compareTo(catExpense[a]!));
+    final catColors = _paletteFor(catKeys.length);
 
-    final daysInMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1, 0).day;
-    final lineSpots = List<FlSpot>.generate(daysInMonth, (i) {
-      final day = i + 1;
-      final sum = _sum(
-        monthTx.where((t) => t.date.day == day).toList(),
-        'expense',
-      );
-      return FlSpot(i.toDouble(), sum);
-    });
-    final maxY = lineSpots.fold<double>(0.0, (a, b) => a > b.y ? a : b.y);
+    // 一次遍历按天汇总。旧实现为每一天重新过滤整月账单，
+    // 复杂度是 O(天数 × 笔数) 且每次都会分配一个临时 List。
+    final daysInMonth =
+        DateTime(_selectedMonth.year, _selectedMonth.month + 1, 0).day;
+    final dailyExpense = List<double>.filled(daysInMonth, 0);
+    for (final t in monthTx) {
+      if (t.type != 'expense') continue;
+      final idx = t.date.day - 1;
+      if (idx >= 0 && idx < daysInMonth) dailyExpense[idx] += t.amount;
+    }
+    final lineSpots = <FlSpot>[
+      for (var i = 0; i < daysInMonth; i++) FlSpot(i.toDouble(), dailyExpense[i]),
+    ];
+    final maxY = dailyExpense.fold<double>(0.0, (a, b) => a > b ? a : b);
     final yMax = maxY == 0 ? 10.0 : maxY * 1.3 + 1.0;
 
     return Column(
@@ -98,9 +135,9 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
             children: [
               _buildOverviewCard(monthExpense, monthIncome, dayExpense, dayIncome),
               const SizedBox(height: 16),
-              _buildCategoryPieCard(catExpense),
+              _buildCategoryPieCard(catExpense, catKeys, catColors),
               const SizedBox(height: 16),
-              _buildTrendCard(lineSpots, yMax, daysInMonth),
+              _buildTrendCard(lineSpots, yMax),
               const SizedBox(height: 80),
             ],
           ),
@@ -119,10 +156,11 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
         children: [
           IconButton(
             onPressed: () {
+              // _monthTx() 已经基于 _selectedMonth 过滤 _all，
+              // 这里无需再全表查询一次。
               setState(() {
                 _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month - 1);
               });
-              _reload();
             },
             icon: const Icon(Icons.chevron_left),
           ),
@@ -135,7 +173,6 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
               setState(() {
                 _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1);
               });
-              _reload();
             },
             icon: const Icon(Icons.chevron_right),
           ),
@@ -215,7 +252,11 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
     );
   }
 
-  Widget _buildCategoryPieCard(Map<String, double> catExpense) {
+  Widget _buildCategoryPieCard(
+    Map<String, double> catExpense,
+    List<String> catKeys,
+    List<Color> catColors,
+  ) {
     final total = catExpense.values.fold<double>(0, (a, b) => a + b);
     return Card(
       child: Padding(
@@ -238,14 +279,16 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                 children: [
                   SizedBox(
                     height: 220,
-                    child: PieChart(_buildPieData(catExpense)),
+                    child: PieChart(_buildPieData(catExpense, catKeys, catColors)),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 16,
                     runSpacing: 8,
-                    children: catExpense.entries.map((e) {
-                      final pct = (e.value / total * 100).toStringAsFixed(1);
+                    children: List.generate(catKeys.length, (i) {
+                      final key = catKeys[i];
+                      final value = catExpense[key]!;
+                      final pct = (value / total * 100).toStringAsFixed(1);
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -253,18 +296,16 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                             width: 12,
                             height: 12,
                             decoration: BoxDecoration(
-                              color: Colors.primaries[
-                                  catExpense.keys.toList().indexOf(e.key) %
-                                      Colors.primaries.length],
+                              color: catColors[i],
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text('${e.key} ${_fmt(e.value)} ($pct%)',
+                          Text('$key ${_fmt(value)} ($pct%)',
                               style: const TextStyle(fontSize: 12)),
                         ],
                       );
-                    }).toList(),
+                    }),
                   ),
                 ],
               ),
@@ -274,22 +315,31 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
     );
   }
 
-  PieChartData _buildPieData(Map<String, double> catExpense) {
-    final categories = catExpense.keys.toList();
-    final sections = catExpense.entries.map((e) {
-      final idx = categories.indexOf(e.key);
-      return PieChartSectionData(
-        value: e.value,
-        title: '${(e.value / catExpense.values.fold<double>(0, (a, b) => a + b) * 100).toStringAsFixed(0)}%',
-        color: Colors.primaries[idx % Colors.primaries.length],
-        radius: 70,
-        titleStyle: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500),
-      );
-    }).toList();
-    return PieChartData(sections: sections, centerSpaceRadius: 0, borderData: FlBorderData(show: false));
+  PieChartData _buildPieData(
+    Map<String, double> catExpense,
+    List<String> catKeys,
+    List<Color> catColors,
+  ) {
+    // 总计只算一次：旧实现放在 map 内部，每个扇区都重新 fold 一遍。
+    final total = catExpense.values.fold<double>(0, (a, b) => a + b);
+    final sections = <PieChartSectionData>[
+      for (var i = 0; i < catKeys.length; i++)
+        PieChartSectionData(
+          value: catExpense[catKeys[i]]!,
+          title: total == 0
+              ? ''
+              : '${(catExpense[catKeys[i]]! / total * 100).toStringAsFixed(0)}%',
+          color: catColors[i],
+          radius: 70,
+          titleStyle: const TextStyle(
+              fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500),
+        ),
+    ];
+    return PieChartData(
+        sections: sections, centerSpaceRadius: 0, borderData: FlBorderData(show: false));
   }
 
-  Widget _buildTrendCard(List<FlSpot> lineSpots, double maxY, int daysInMonth) {
+  Widget _buildTrendCard(List<FlSpot> lineSpots, double maxY) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -329,7 +379,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        interval: maxY > 100 ? 50 : (maxY > 10 ? 10 : 2),
+                        interval: _niceInterval(maxY),
                         reservedSize: 50,
                       ),
                     ),

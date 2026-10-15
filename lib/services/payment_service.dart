@@ -9,18 +9,20 @@ class PaymentService {
   PaymentService._();
 
   /// 规则：
-  /// - 10 分钟内已存在同来源 + 同金额的自动账单 -> 跳过（不重复生成）
+  /// - 10 分钟内已存在同来源 + 同金额 + **同收支方向**的自动账单 -> 跳过（不重复生成）
   /// - 用户手动编辑过的记录保持原样，不会被后续通知覆盖
   /// - 其余情况新增一条自动账单
   Future<void> handleEvent(PaymentEvent event) async {
     final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now();
-    final window = now.subtract(const Duration(minutes: 10)).toIso8601String();
+    // 用事件自身的发生时间，而不是「现在」：
+    // 原生层会缓存 App 未运行期间的通知，补记时必须还原原始日期。
+    final eventTime = event.timestamp ?? DateTime.now();
+    final window = eventTime.subtract(const Duration(minutes: 10)).toIso8601String();
 
     final rows = await db.query(
       'transactions',
-      where: 'isAuto = 1 AND sourceApp = ? AND date >= ?',
-      whereArgs: [event.sourceApp, window],
+      where: 'isAuto = 1 AND sourceApp = ? AND type = ? AND date >= ?',
+      whereArgs: [event.sourceApp, event.type, window],
     );
     for (final row in rows) {
       final existing = Transaction.fromMap(row);
@@ -34,7 +36,7 @@ class PaymentService {
       type: event.type,
       category: _guessCategory(event),
       note: event.content,
-      date: now,
+      date: eventTime,
       isAuto: true,
       isEdited: false,
       sourceApp: event.sourceApp,

@@ -53,6 +53,8 @@ class _TransactionListScreenState extends State<TransactionListScreen>
       t.date.day == date.day;
 
   Future<void> _delete(Transaction t) async {
+    final id = t.id;
+    if (id == null) return;
     final messenger = ScaffoldMessenger.of(context);
     final confirm = await showDialog<bool>(
       context: context,
@@ -69,14 +71,13 @@ class _TransactionListScreenState extends State<TransactionListScreen>
         ],
       ),
     );
-    if (confirm == true) {
-      await DatabaseHelper.instance.deleteTransaction(t.id!);
-      AppState.instance.bump();
-      if (!mounted) return;
-      messenger.showSnackBar(
-        const SnackBar(content: Text('已删除'), duration: Duration(seconds: 1)),
-      );
-    }
+    if (confirm != true) return;
+    await DatabaseHelper.instance.deleteTransaction(id);
+    AppState.instance.bump();
+    if (!mounted) return;
+    messenger.showSnackBar(
+      const SnackBar(content: Text('已删除'), duration: Duration(seconds: 1)),
+    );
   }
 
   List<Transaction> get _filteredList {
@@ -85,7 +86,8 @@ class _TransactionListScreenState extends State<TransactionListScreen>
   }
 
   Color _categoryColor(String category) {
-    return Colors.primaries[category.hashCode.abs() % Colors.primaries.length];
+    // Dart 的 % 在正模数下结果恒为非负，无需 .abs()（后者对最小 int 会抛异常）。
+    return Colors.primaries[category.hashCode % Colors.primaries.length];
   }
 
   double _sum(List<Transaction> list, String type) =>
@@ -332,8 +334,11 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
     _amountController = TextEditingController(text: widget.transaction.amount.toString());
     _noteController = TextEditingController(text: widget.transaction.note ?? '');
     _date = widget.transaction.date;
-    _type = widget.transaction.type;
-    _category = widget.transaction.category;
+    // 归一化：DropdownButtonFormField 在当前值不在 items 中时会直接 assert 崩溃，
+    // 旧版本导入的脏数据必须在此兜住。
+    _type = parseTransactionType(widget.transaction.type).value;
+    final rawCategory = widget.transaction.category;
+    _category = Categories.names().contains(rawCategory) ? rawCategory : '其他';
   }
 
   @override
@@ -355,16 +360,24 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
       return;
     }
 
+    final noteText = _noteController.text.trim();
     final updated = widget.transaction.copyWith(
       amount: amount,
       type: _type,
       category: _category,
-      note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+      note: noteText.isEmpty ? null : noteText,
+      clearNote: noteText.isEmpty,
       date: _date,
       isEdited: true,
     );
 
-    await DatabaseHelper.instance.updateTransaction(updated);
+    try {
+      await DatabaseHelper.instance.updateTransaction(updated);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('保存失败：$e')));
+      return;
+    }
     AppState.instance.bump();
     if (!mounted) return;
     messenger.showSnackBar(
@@ -375,7 +388,8 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return SingleChildScrollView(
+      // 小屏 + 键盘弹出时固定高度会溢出，交给滚动容器处理。
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -450,6 +464,8 @@ class _EditBottomSheetState extends State<_EditBottomSheet> {
                 firstDate: DateTime(2000),
                 lastDate: DateTime(2101),
               );
+              // await 之后必须确认 State 仍存活，否则 setState 会抛异常。
+              if (!mounted) return;
               if (picked != null) setState(() => _date = picked);
             },
           ),

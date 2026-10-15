@@ -17,6 +17,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        PaymentEvents.init(applicationContext)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -41,14 +42,20 @@ class MainActivity : FlutterActivity() {
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     eventSink = events
-                    PaymentEvents.listener = { amount, sourceApp, content, type ->
+
+                    val emit: (Double, String, String, String, Long) -> Unit = { amount, sourceApp, content, type, ts ->
                         eventSink?.success(mapOf(
                             "amount" to amount,
                             "sourceApp" to sourceApp,
                             "content" to content,
-                            "type" to type
+                            "type" to type,
+                            "timestamp" to ts
                         ))
                     }
+
+                    PaymentEvents.listener = emit
+                    // 补发 App 未运行期间积压的支付通知。
+                    PaymentEvents.flushPending(emit)
                 }
 
                 override fun onCancel(arguments: Any?) {

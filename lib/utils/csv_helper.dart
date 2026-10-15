@@ -1,5 +1,7 @@
-import '../models/transaction.dart';
 import 'package:csv/csv.dart';
+
+import '../models/enums.dart';
+import '../models/transaction.dart';
 
 String transactionsToCsv(List<Transaction> list) {
   final rows = <List<dynamic>>[
@@ -22,7 +24,10 @@ String transactionsToCsv(List<Transaction> list) {
 }
 
 List<Transaction> csvToTransactions(String csv) {
-  final rows = const CsvToListConverter(eol: '\n').convert(csv);
+  // 导出用的是 ListToCsvConverter 默认的 CRLF，而解析器按 LF 切行，
+  // 不统一的话每行最后一列会残留一个 \r，导致 sourceApp 等字段被污染。
+  final normalized = csv.replaceAll('\r\n', '\n');
+  final rows = const CsvToListConverter(eol: '\n').convert(normalized);
   if (rows.length < 2) return [];
 
   bool truthy(List<dynamic> r, int i) =>
@@ -32,22 +37,47 @@ List<Transaction> csvToTransactions(String csv) {
           r[i].toString().toLowerCase() == 'true' ||
           r[i].toString() == '1');
 
-  return rows.skip(1).where((r) => r.length >= 5 && r[1] is num).map((r) {
-    final idRaw = r[0];
-    final dateRaw = r[5]?.toString() ?? '';
-    final date = dateRaw.isNotEmpty
-        ? (DateTime.tryParse(dateRaw) ?? DateTime.now())
-        : DateTime.now();
-    return Transaction(
-      id: idRaw is num ? idRaw.toInt() : null,
-      amount: (r[1] as num).toDouble(),
-      type: r[2].toString(),
-      category: r[3].toString(),
-      note: r.length > 4 ? (r[4]?.toString().isEmpty ?? true ? null : r[4].toString()) : null,
-      date: date,
-      isAuto: truthy(r, 6),
-      isEdited: truthy(r, 7),
-      sourceApp: r.length > 8 ? r[8].toString() : null,
+  String cell(List<dynamic> r, int i) {
+    if (i >= r.length) return '';
+    // csv 包对空字段可能给出 null 或 ''，统一折叠成空字符串。
+    final v = r[i];
+    if (v == null) return '';
+    return v.toString();
+  }
+
+  final parsed = <Transaction>[];
+  for (final r in rows.skip(1)) {
+    if (r.length < 5) continue;
+    final rawAmount = r[1];
+    // CSV 文本默认解析成 num，但用户手改的文件可能是 "¥12.50" 这类脏值。
+    final amount = rawAmount is num
+        ? rawAmount.toDouble()
+        : double.tryParse(cell(r, 1).replaceAll(RegExp(r'[^0-9.\-]'), ''));
+    if (amount == null || amount.isNaN || amount.isInfinite) continue;
+
+    final note = cell(r, 4).trim();
+
+    // type / category 必须归一化到内置取值，否则编辑页的
+    // DropdownButtonFormField 会因为找不到匹配项直接 assert 崩溃。
+    final type = parseTransactionType(cell(r, 2)).value;
+    final rawCategory = cell(r, 3).trim();
+    final category = Categories.names().contains(rawCategory) ? rawCategory : '其他';
+
+    final date = DateTime.tryParse(cell(r, 5).trim()) ?? DateTime.now();
+
+    parsed.add(
+      Transaction(
+        // CSV 不携带 id，交给自增主键分配。
+        amount: amount,
+        type: type,
+        category: category,
+        note: note.isEmpty ? null : note,
+        date: date,
+        isAuto: truthy(r, 6),
+        isEdited: truthy(r, 7),
+        sourceApp: cell(r, 8).trim().isEmpty ? null : cell(r, 8).trim(),
+      ),
     );
-  }).toList();
+  }
+  return parsed;
 }

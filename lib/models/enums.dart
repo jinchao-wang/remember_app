@@ -20,11 +20,15 @@ extension TransactionTypeExtension on TransactionType {
       };
 }
 
-TransactionType parseTransactionType(String? value) =>
-    switch (value) {
-      'income' => TransactionType.income,
-      _ => TransactionType.expense,
-    };
+/// 宽松解析：兼容 CSV 里可能出现的中英文、大小写与多余空白。
+/// 任何无法识别的值都按「支出」处理，与历史行为保持一致。
+TransactionType parseTransactionType(String? value) {
+  final v = value?.trim().toLowerCase() ?? '';
+  return switch (v) {
+    'income' || '收入' || 'in' => TransactionType.income,
+    _ => TransactionType.expense,
+  };
+}
 
 /// 默认分类与图标
 class Categories {

@@ -1,11 +1,38 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:remember_app/screens/home_screen.dart';
+import 'package:remember_app/services/notification_listener.dart';
+import 'package:remember_app/services/payment_service.dart';
+
+/// 持有订阅引用，避免被 GC 回收导致自动记账中断。
+StreamSubscription<PaymentEvent>? paymentSubscription;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN', null);
+  _startPaymentListener();
   runApp(const RememberApp());
+}
+
+/// 订阅 Android 通知监听推送的支付事件，落库为自动账单。
+///
+/// 之前原生侧 PaymentEvents.post() 找不到 listener（EventChannel 的 onListen
+/// 从未触发），导致整套自动记账功能是死代码，这里补上链路。
+void _startPaymentListener() {
+  // iOS / 桌面端没有对应原生实现，不订阅避免 MissingPluginException 噪音。
+  if (defaultTargetPlatform != TargetPlatform.android) return;
+
+  paymentSubscription = PaymentNotificationListener.paymentStream.listen(
+    (event) {
+      PaymentService.instance.handleEvent(event);
+    },
+    onError: (Object error) {
+      debugPrint('支付通知流异常：$error');
+    },
+    cancelOnError: false,
+  );
 }
 
 class RememberApp extends StatelessWidget {
@@ -14,7 +41,7 @@ class RememberApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '记事本',
+      title: 'Remember 记账',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

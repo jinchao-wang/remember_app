@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
+import '../models/transaction.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
 import '../utils/csv_helper.dart';
@@ -15,7 +16,7 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
   bool _listening = false;
   bool _checking = true;
   static const _platform = MethodChannel('remember/payment_listener');
@@ -23,7 +24,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkNotificationStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 用户跳到系统设置开启权限后返回，必须重新读取状态，
+    // 否则界面会一直显示「未开启」。
+    if (state == AppLifecycleState.resumed) {
+      _checkNotificationStatus();
+    }
   }
 
   Future<void> _checkNotificationStatus() async {
@@ -106,28 +123,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       if (confirm != true) return;
 
-      int imported = 0;
+      // 只查一次全表并建索引：旧实现对每一行都 getTransactions()，
+      // 是 O(n^2) 的全表扫描，几百行 CSV 足以卡住界面。
+      // dedupeKey 含 type，收入/支出同额不会被误判为重复。
+      final existing = await DatabaseHelper.instance.getTransactions();
+      final seen = existing.map((e) => e.dedupeKey).toSet();
+
+      final toInsert = <Transaction>[];
       for (final tx in list) {
-        try {
-          final existing = await DatabaseHelper.instance.getTransactions();
-          final duplicate = existing.any((e) =>
-              e.category == tx.category &&
-              (e.amount - tx.amount).abs() < 0.01 &&
-              e.date.year == tx.date.year &&
-              e.date.month == tx.date.month &&
-              e.date.day == tx.date.day);
-          if (!duplicate) {
-            await DatabaseHelper.instance.insertTransaction(tx);
-            imported++;
-          }
-        } catch (_) {
-          // skip
-        }
+        if (seen.add(tx.dedupeKey)) toInsert.add(tx);
       }
+
+      await DatabaseHelper.instance.insertAll(toInsert);
+      final imported = toInsert.length;
+      final skipped = list.length - imported;
+
       AppState.instance.bump();
       if (!mounted) return;
       ScaffoldMessenger.of(ctx).showSnackBar(
-        SnackBar(content: Text('导入完成，成功导入 $imported 条记录'), duration: const Duration(seconds: 2)),
+        SnackBar(
+          content: Text(
+            skipped == 0
+                ? '导入完成，成功导入 $imported 条记录'
+                : '导入完成：新增 $imported 条，跳过重复 $skipped 条',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -155,8 +176,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirm != true) return;
-    final db = await DatabaseHelper.instance.database;
-    await db.delete('transactions');
+    await DatabaseHelper.instance.deleteAllTransactions();
     AppState.instance.bump();
     if (!mounted) return;
     ScaffoldMessenger.of(ctx).showSnackBar(
@@ -259,7 +279,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('记事本 v1.0', style: Theme.of(context).textTheme.titleMedium),
+                    Text('Remember 记账 v1.0', style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 8),
                     Text(
                       '本地优先，数据存储在设备上，不联网，不上传服务器。',

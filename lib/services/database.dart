@@ -7,11 +7,13 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
   DatabaseHelper._();
 
-  static Database? _db;
+  static Future<Database>? _dbFuture;
 
-  Future<Database> get database async {
-    _db ??= await _init();
-    return _db!;
+  Future<Database> get database {
+    // 缓存 Future 而不是 Database：首页 IndexedStack 的三个 Tab 会在同一帧
+    // 各自触发一次查询，若只缓存 _db 则三者都会看到 null 并并发 openDatabase。
+    _dbFuture ??= _init();
+    return _dbFuture!;
   }
 
   Future<Database> _init() async {
@@ -50,21 +52,39 @@ CREATE TABLE transactions(
   }
 
   Future<void> insertAll(List<Transaction> list) async {
+    if (list.isEmpty) return;
     final db = await database;
     final batch = db.batch();
     for (final t in list) {
-      batch.insert('transactions', t.toMap() as Map<String, Object?>);
+      // 丢弃 CSV 里带来的旧 id，避免主键冲突导致整批插入失败。
+      final values = t.toMap()..remove('id');
+      batch.insert('transactions', values as Map<String, Object?>);
     }
     await batch.commit(noResult: true);
   }
 
   Future<int> updateTransaction(Transaction t) async {
+    if (t.id == null) {
+      throw ArgumentError('updateTransaction 需要非空 id');
+    }
     final db = await database;
-    return db.update('transactions', t.toMap() as Map<String, Object?>, where: 'id = ?', whereArgs: [t.id]);
+    // 不把主键写回 values，避免误改 id。
+    final values = t.toMap()..remove('id');
+    return db.update(
+      'transactions',
+      values as Map<String, Object?>,
+      where: 'id = ?',
+      whereArgs: [t.id],
+    );
   }
 
   Future<int> deleteTransaction(int id) async {
     final db = await database;
     return db.delete('transactions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteAllTransactions() async {
+    final db = await database;
+    return db.delete('transactions');
   }
 }

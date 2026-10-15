@@ -52,6 +52,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         },
       ),
     );
+    // await 期间 HomeScreen 可能已被销毁，此时操作 AnimationController 会抛异常。
+    if (!mounted) return;
     _fabAnimationController.reset();
   }
 
