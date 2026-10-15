@@ -86,5 +86,5 @@ class Transaction {
 
   /// 用于「金额 + 类型 + 分类 + 日期」完全相同且在同一时刻的判重键。
   String get dedupeKey =>
-      '${type}|${category}|${amount.toStringAsFixed(2)}|${date.year}-${date.month}-${date.day}';
+      '$type|$category|${amount.toStringAsFixed(2)}|${date.year}-${date.month}-${date.day}';
 }
