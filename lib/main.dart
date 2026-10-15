@@ -1,5 +1,8 @@
 import 'dart:async';
 
+// material.dart 只通过 widgets.dart 的 show 列表再导出 foundation 的一部分，
+// defaultTargetPlatform / TargetPlatform 不在其中，必须显式导入。
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:remember_app/screens/home_screen.dart';
