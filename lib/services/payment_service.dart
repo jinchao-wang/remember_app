@@ -8,8 +8,25 @@ class PaymentService {
   static final PaymentService instance = PaymentService._();
   PaymentService._();
 
+  /// 判重时间窗。同一笔通知可能被系统重复推送，短时间内只记一条。
+  static const Duration dedupeWindow = Duration(minutes: 10);
+
+  /// 判断一条已存在的自动账单是否就是本次通知的同一笔。
+  ///
+  /// 必须比较**双边**时间差。原来只在 SQL 里设了下界 `date >= window`，
+  /// 结果「12:00 的那笔已入库、11:40 的缓存补记到达」这种乱序场景会被误判为重复
+  /// 而丢掉——而缓存补发恰恰是乱序的。
+  static bool isSamePaymentEvent({
+    required Transaction existing,
+    required double eventAmount,
+    required DateTime eventTime,
+  }) {
+    if ((existing.amount - eventAmount).abs() >= 0.005) return false;
+    return existing.date.difference(eventTime).abs() <= dedupeWindow;
+  }
+
   /// 规则：
-  /// - 10 分钟内已存在同来源 + 同金额 + **同收支方向**的自动账单 -> 跳过（不重复生成）
+  /// - [dedupeWindow] 内已存在同来源 + 同金额 + **同收支方向**的自动账单 -> 跳过
   /// - 用户手动编辑过的记录保持原样，不会被后续通知覆盖
   /// - 其余情况新增一条自动账单
   Future<void> handleEvent(PaymentEvent event) async {
@@ -17,8 +34,9 @@ class PaymentService {
     // 用事件自身的发生时间，而不是「现在」：
     // 原生层会缓存 App 未运行期间的通知，补记时必须还原原始日期。
     final eventTime = event.timestamp ?? DateTime.now();
-    final window = eventTime.subtract(const Duration(minutes: 10)).toIso8601String();
+    final window = eventTime.subtract(dedupeWindow).toIso8601String();
 
+    // SQL 只用下界做索引预筛，真正的双边判断交给 isSamePaymentEvent。
     final rows = await db.query(
       'transactions',
       where: 'isAuto = 1 AND sourceApp = ? AND type = ? AND date >= ?',
@@ -26,7 +44,11 @@ class PaymentService {
     );
     for (final row in rows) {
       final existing = Transaction.fromMap(row);
-      if ((existing.amount - event.amount).abs() < 0.005) {
+      if (isSamePaymentEvent(
+        existing: existing,
+        eventAmount: event.amount,
+        eventTime: eventTime,
+      )) {
         return;
       }
     }

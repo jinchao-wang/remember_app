@@ -11,8 +11,19 @@ import android.util.Log
 
 class PaymentNotificationListenerService : NotificationListenerService() {
 
-    private val expenseKeywords = listOf("支付成功","付款成功","消费","支出","扣款","购买","下单","还款","充值")
-    private val incomeKeywords = listOf("收款","到账","转入","红包")
+    // 明确的方向词。注意「转账 / 转出 / 提现」是资金流出，
+    // 而「收到转账 / 到账 / 退款」是流入，不能混为一谈。
+    private val expenseKeywords = listOf(
+        "支付成功", "付款成功", "消费", "支出", "扣款", "购买", "下单", "还款", "充值",
+        "转出", "提现"
+    )
+    private val incomeKeywords = listOf("收款", "到账", "转入", "红包", "退款")
+
+    /**
+     * 「转账」本身不表方向：单独的「转账成功」多为转出（记支出），
+     * 但「微信转账到账」是流入。若把它塞进支出词表，后一种会被误判成支出。
+     */
+    private val ambiguousKeywords = listOf("转账")
 
     override fun onCreate() {
         super.onCreate()
@@ -28,12 +39,26 @@ class PaymentNotificationListenerService : NotificationListenerService() {
 
         val isExpense = expenseKeywords.any { content.contains(it) }
         val isIncome = incomeKeywords.any { content.contains(it) }
-        if (!isExpense && !isIncome) return
+        val isAmbiguous = ambiguousKeywords.any { content.contains(it) }
+        // 之前这里只有 isExpense/isIncome，导致「转账成功」「提现到卡」这类
+        // 完全不记账——Dart 侧明明有「转账」分类，原生层却把它挡在门外。
+        if (!isExpense && !isIncome && !isAmbiguous) return
 
         val amount = extractAmount(content) ?: return
-        val type = if (isIncome && !isExpense) TYPE_INCOME else TYPE_EXPENSE
+        val type = resolveType(isExpense, isIncome)
         Log.i(TAG, "detected: type=$type amount=$amount from=${sbn.packageName}")
         PaymentEvents.post(amount, sbn.packageName, content, type, sbn.postTime)
+    }
+
+    /**
+     * 收支方向判定。收入词与支出词同时命中时以支出为准（保持原有行为），
+     * 只命中歧义词「转账」时默认按流出处理。
+     */
+    private fun resolveType(isExpense: Boolean, isIncome: Boolean): String = when {
+        isIncome && !isExpense -> TYPE_INCOME
+        isExpense -> TYPE_EXPENSE
+        isIncome -> TYPE_INCOME
+        else -> TYPE_EXPENSE
     }
 
     /**
