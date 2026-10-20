@@ -19,6 +19,22 @@ android/app/profile/
 *.keystore
 *.jks
 
+# Android 平台脚手架由 `flutter create` 生成（含本机相关的 build.gradle），不进版本库
+android/.gitignore
+android/build.gradle
+android/settings.gradle
+android/gradle.properties
+android/gradle/
+android/app/build.gradle
+android/app/src/debug/
+android/app/src/profile/
+android/app/src/main/res/
+android/app/src/main/java/
+
+# Flutter 生成物
+.metadata
+pubspec.lock
+
 # iOS
 ios/Pods/
 ios/.symlinks/
@@ -32,3 +48,6 @@ ios/Runner.xcworkspace/xcshareddata/
 # OS
 .DS_Store
 Thumbs.db
+
+# 本机 AI 工具的权限白名单，属于个人环境，不应进版本库
+.claude/

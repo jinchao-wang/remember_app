@@ -1,0 +1,16 @@
+// 给 Android 模块注入 JUnit，用于运行 android/app/src/test 下的 JVM 单元测试。
+//
+// 为什么要用 init script 而不是直接改 android/app/build.gradle：
+// 仓库里只跟踪 4 个 android 文件，build.gradle 是 CI 里由
+// `flutter create` 临时生成的，直接改它每次构建都会被覆盖。
+// 用 init script 则这份配置可以进版本库，CI 与本地行为完全一致。
+//
+// 用法：cd android && ./gradlew :app:testDebugUnitTest -I ci-junit.gradle
+
+allprojects {
+    plugins.withId('com.android.application') {
+        dependencies {
+            testImplementation 'junit:junit:4.13.2'
+        }
+    }
+}

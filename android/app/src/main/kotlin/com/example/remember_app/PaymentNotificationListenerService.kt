@@ -11,20 +11,6 @@ import android.util.Log
 
 class PaymentNotificationListenerService : NotificationListenerService() {
 
-    // 明确的方向词。注意「转账 / 转出 / 提现」是资金流出，
-    // 而「收到转账 / 到账 / 退款」是流入，不能混为一谈。
-    private val expenseKeywords = listOf(
-        "支付成功", "付款成功", "消费", "支出", "扣款", "购买", "下单", "还款", "充值",
-        "转出", "提现"
-    )
-    private val incomeKeywords = listOf("收款", "到账", "转入", "红包", "退款")
-
-    /**
-     * 「转账」本身不表方向：单独的「转账成功」多为转出（记支出），
-     * 但「微信转账到账」是流入。若把它塞进支出词表，后一种会被误判成支出。
-     */
-    private val ambiguousKeywords = listOf("转账")
-
     override fun onCreate() {
         super.onCreate()
         // 必须在任何 post() 之前初始化，否则缓存无处可写。
@@ -37,28 +23,17 @@ class PaymentNotificationListenerService : NotificationListenerService() {
         val content = extractContent(sbn.notification.extras)
         if (content.isBlank()) return
 
-        val isExpense = expenseKeywords.any { content.contains(it) }
-        val isIncome = incomeKeywords.any { content.contains(it) }
-        val isAmbiguous = ambiguousKeywords.any { content.contains(it) }
-        // 之前这里只有 isExpense/isIncome，导致「转账成功」「提现到卡」这类
-        // 完全不记账——Dart 侧明明有「转账」分类，原生层却把它挡在门外。
-        if (!isExpense && !isIncome && !isAmbiguous) return
+        // 关键词匹配与金额提取都交给纯 Kotlin 的 PaymentParser，
+        // 那边有 JVM 单元测试覆盖，改动不会只靠真机才发现问题。
+        val parsed = PaymentParser.parse(content)
+        if (parsed == null) {
+            // 不是支付通知（或者缺少金额/方向），直接忽略。
+            Log.d(TAG, "ignored: $content")
+            return
+        }
 
-        val amount = extractAmount(content) ?: return
-        val type = resolveType(isExpense, isIncome)
-        Log.i(TAG, "detected: type=$type amount=$amount from=${sbn.packageName}")
-        PaymentEvents.post(amount, sbn.packageName, content, type, sbn.postTime)
-    }
-
-    /**
-     * 收支方向判定。收入词与支出词同时命中时以支出为准（保持原有行为），
-     * 只命中歧义词「转账」时默认按流出处理。
-     */
-    private fun resolveType(isExpense: Boolean, isIncome: Boolean): String = when {
-        isIncome && !isExpense -> TYPE_INCOME
-        isExpense -> TYPE_EXPENSE
-        isIncome -> TYPE_INCOME
-        else -> TYPE_EXPENSE
+        Log.i(TAG, "detected: type=${parsed.type} amount=${parsed.amount} from=${sbn.packageName}")
+        PaymentEvents.post(parsed.amount, sbn.packageName, content, parsed.type, sbn.postTime)
     }
 
     /**
@@ -78,24 +53,6 @@ class PaymentNotificationListenerService : NotificationListenerService() {
         return parts.joinToString(" ")
     }
 
-    private fun extractAmount(content: String): Double? {
-        // 带货币符号或「元」后缀的优先，且允许千分位。
-        val symbol = Regex("""(?:¥|￥|RMB)\s*(\d{1,9}(?:,\d{3})*(?:\.\d{1,2})?)|(\d{1,9}(?:,\d{3})*(?:\.\d{1,2})?)\s*元""")
-        symbol.find(content)?.let {
-            val raw = it.groupValues[1].ifEmpty { it.groupValues[2] }
-            if (raw.isNotBlank()) {
-                raw.replace(",", "").toDoubleOrNull()?.let { return it }
-            }
-        }
-        // 兜底：裸的两位小数。这里刻意不放开位数上限，
-        // 否则订单号/卡号等长数字会被误当成金额。
-        val plain = Regex("""\d{1,7}\.\d{2}""")
-        plain.find(content)?.let {
-            return it.value.replace(",", "").toDoubleOrNull()
-        }
-        return null
-    }
-
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "通知监听已连接")
@@ -108,8 +65,6 @@ class PaymentNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "PaymentListener"
-        private const val TYPE_EXPENSE = "expense"
-        private const val TYPE_INCOME = "income"
 
         fun isNotificationListeningEnabled(context: Context): Boolean {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {

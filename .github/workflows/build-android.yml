@@ -71,6 +71,15 @@ jobs:
           echo "::error title=flutter test::${msg}"
           exit $code
 
+      - name: Android native unit tests
+        run: |
+          cd android
+          ./gradlew :app:testDebugUnitTest -I ci-junit.gradle --console=plain > native-test.txt 2>&1 && code=0 || code=$?
+          cat native-test.txt
+          msg=$(tail -c 3000 native-test.txt | tr '\n\r' '  ' | sed 's/%/%25/g')
+          echo "::error title=android native test::${msg}"
+          exit $code
+
       - name: Build release APK
         run: flutter build apk --release
 
