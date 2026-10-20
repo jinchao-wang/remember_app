@@ -58,7 +58,28 @@ flutter run
 ## 持续集成
 
 推送到 GitHub 后，`.github/workflows/build-android.yml` 与 `build-ios.yml` 会触发：
-- Android（ubuntu-latest）：`flutter build apk --release` → `remember-app-android-apk` 产物
+- Android（ubuntu-latest）：`flutter analyze` → `flutter test` → `:app:testDebugUnitTest`
+  → `flutter build apk --release` → `remember-app-android-apk` 产物
 - iOS（macos-15）：`flutter build ios --release --no-codesign` → 打包为 unsigned IPA `remember-app-unsigned-ipa`
 
 产物在 Actions → Artifacts 中下载。生产发布时请使用自己的签名配置。
+
+## 测试
+
+| 层次 | 位置 | 覆盖内容 |
+| --- | --- | --- |
+| Dart 单元测试 | `test/` | 模型、CSV 解析、判重逻辑、事件字段映射 |
+| Kotlin 单元测试 | `android/app/src/test/` | 通知解析：方向判定、金额提取（含多数字、日期、千分位等回归用例） |
+| 模拟器端到端 | `tool/e2e_notification_test.py` | 真实通知 → 落库全链路、判重、离线缓存补发 |
+
+端到端脚本需要一台已启动的 Android 模拟器：
+
+```bash
+flutter build apk --debug
+adb shell cmd notification allow_listener \
+    com.example.remember_app/com.example.remember_app.PaymentNotificationListenerService
+python tool/e2e_notification_test.py
+```
+
+它直接查模拟器里的 sqlite，不需要肉眼看 UI；开发过程中就是它找出了
+「金额取错 / 日期被当金额 / 关键词误判」三个真实缺陷。
