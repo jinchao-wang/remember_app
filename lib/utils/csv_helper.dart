@@ -5,7 +5,7 @@ import '../models/transaction.dart';
 
 String transactionsToCsv(List<Transaction> list) {
   final rows = <List<dynamic>>[
-    ['id', 'amount', 'type', 'category', 'note', 'date', 'isAuto', 'isEdited', 'sourceApp'],
+    ['id', 'amount', 'type', 'category', 'note', 'date', 'isAuto', 'isEdited', 'sourceApp', 'externalId'],
   ];
   for (final t in list) {
     rows.add([
@@ -18,6 +18,7 @@ String transactionsToCsv(List<Transaction> list) {
       t.isAuto ? 1 : 0,
       t.isEdited ? 1 : 0,
       t.sourceApp ?? '',
+      t.externalId ?? '',
     ]);
   }
   return const ListToCsvConverter().convert(rows);
@@ -65,6 +66,9 @@ List<Transaction> csvToTransactions(String csv) {
 
     final date = DateTime.tryParse(cell(r, 5).trim()) ?? DateTime.now();
 
+    // externalId 是第 10 列，v1 导出的旧文件没有这一列，属于可选项。
+    final externalId = cell(r, 9).trim();
+
     parsed.add(
       Transaction(
         // CSV 不携带 id，交给自增主键分配。
@@ -76,6 +80,7 @@ List<Transaction> csvToTransactions(String csv) {
         isAuto: truthy(r, 6),
         isEdited: truthy(r, 7),
         sourceApp: cell(r, 8).trim().isEmpty ? null : cell(r, 8).trim(),
+        externalId: externalId.isEmpty ? null : externalId,
       ),
     );
   }

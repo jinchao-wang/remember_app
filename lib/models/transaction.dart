@@ -9,6 +9,12 @@ class Transaction {
   final bool isEdited;
   final String? sourceApp;
 
+  /// 平台侧的交易单号（微信「交易单号」/ 支付宝「交易号」）。
+  ///
+  /// 账单导入靠它精确判重：同一个文件导入两次不会产生重复记录，
+  /// 而「同金额同时间」的弱匹配会把一天内两笔同价消费误判成重复。
+  final String? externalId;
+
   Transaction({
     this.id,
     required this.amount,
@@ -19,6 +25,7 @@ class Transaction {
     this.isAuto = false,
     this.isEdited = false,
     this.sourceApp,
+    this.externalId,
   });
 
   Map<String, dynamic> toMap() => {
@@ -31,6 +38,7 @@ class Transaction {
         'isAuto': isAuto ? 1 : 0,
         'isEdited': isEdited ? 1 : 0,
         'sourceApp': sourceApp,
+        'externalId': externalId,
       };
 
   factory Transaction.fromMap(Map<String, dynamic> map) => Transaction(
@@ -43,6 +51,7 @@ class Transaction {
         isAuto: _toInt(map['isAuto']) == 1,
         isEdited: _toInt(map['isEdited']) == 1,
         sourceApp: map['sourceApp'] as String?,
+        externalId: map['externalId'] as String?,
       );
 
   static double? _toDouble(Object? v) =>
@@ -69,8 +78,10 @@ class Transaction {
     bool? isAuto,
     bool? isEdited,
     String? sourceApp,
+    String? externalId,
     bool clearNote = false,
     bool clearSourceApp = false,
+    bool clearExternalId = false,
   }) =>
       Transaction(
         id: id ?? this.id,
@@ -82,6 +93,7 @@ class Transaction {
         isAuto: isAuto ?? this.isAuto,
         isEdited: isEdited ?? this.isEdited,
         sourceApp: clearSourceApp ? null : (sourceApp ?? this.sourceApp),
+        externalId: clearExternalId ? null : (externalId ?? this.externalId),
       );
 
   /// 用于「金额 + 类型 + 分类 + 日期」完全相同且在同一时刻的判重键。

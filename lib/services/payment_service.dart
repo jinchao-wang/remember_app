@@ -1,4 +1,5 @@
 import '../models/transaction.dart';
+import '../utils/category_guesser.dart';
 import 'app_state.dart';
 import 'database.dart';
 import 'notification_listener.dart';
@@ -68,18 +69,7 @@ class PaymentService {
   }
 
   String _guessCategory(PaymentEvent event) {
-    final text = event.content;
-    const rules = <String, List<String>>{
-      '餐饮': ['美团', '饿了么', '外卖', '餐厅', '饭店', '肯德基', '麦当劳', '瑞幸', '星巴克', '奶茶', '咖啡'],
-      '交通': ['滴滴', '高德', '打车', '出租', '加油', '充电', '停车', '地铁', '公交', '12306', '铁路'],
-      '购物': ['淘宝', '天猫', '京东', '拼多多', '抖音', '快手', '商城', '购物', '快递', '下单'],
-      '日用': ['超市', '便利店', '水果', '买菜', '永辉', '大润发', '沃尔玛'],
-      '娱乐': ['电影', '游戏', '视频', '音乐', '会员', '充值', '直播'],
-      '转账': ['微信', '支付宝', '转账', '红包', '还款', '收款', '到账', '银行'],
-    };
-    for (final entry in rules.entries) {
-      if (entry.value.any(text.contains)) return entry.key;
-    }
-    return '其他';
+    // 与账单导入共用同一套规则表（lib/utils/category_guesser.dart）。
+    return guessCategory(event.content);
   }
 }

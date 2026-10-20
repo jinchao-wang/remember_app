@@ -6,7 +6,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import '../models/transaction.dart';
 import '../services/app_state.dart';
+import '../services/bill_import_service.dart';
 import '../services/database.dart';
+import '../utils/bill_parser.dart';
 import '../utils/csv_helper.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -158,6 +160,68 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     }
   }
 
+  /// 导入微信 / 支付宝官方账单。
+  ///
+  /// 通知监听只覆盖「系统弹了通知」的场景；在微信、支付宝 App 内部发起的
+  /// 转账平台并不发通知，那部分账只能从官方账单文件补。
+  Future<void> _importBill() async {
+    final ctx = context;
+    try {
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'xlsx', 'zip'],
+      );
+      if (res == null || res.files.single.path == null) return;
+
+      final result = await BillImportService.importFile(res.files.single.path!);
+      if (!mounted) return;
+
+      if (!result.ok) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text(result.error ?? '导入失败'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      final message = StringBuffer('${result.source.label}账单导入完成：新增 ${result.imported} 条');
+      if (result.duplicates > 0) message.write('，跳过重复 ${result.duplicates} 条');
+      if (result.skipped > 0) message.write('，忽略无效 ${result.skipped} 行');
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text(message.toString()), duration: const Duration(seconds: 4)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text('导入失败：$e'), duration: const Duration(seconds: 3)),
+      );
+    }
+  }
+
+  Future<void> _showBillHelp() async {
+    final ctx = context;
+    await showDialog<void>(
+      context: ctx,
+      builder: (inner) => AlertDialog(
+        title: const Text('怎么导出账单'),
+        content: const Text(
+          '微信：我的 → 服务 → 钱包 → 账单 → 右上角「…」→ 账单下载，\n'
+          '选择时间范围后会收到邮件或下载压缩包（zip 里是 xlsx），\n'
+          '也可以在电脑版微信导出 csv。\n\n'
+          '支付宝：我的 → 账单 → 右上角「…」→ 账单导出 / 交易记录证明，\n'
+          '下载得到的 csv 是 GBK 编码，本应用会自动识别。\n\n'
+          '导入后可在账单列表里核对并修改分类。',
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(inner), child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _clearAll() async {
     final ctx = context;
     final confirm = await showDialog<bool>(
@@ -208,6 +272,18 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     title: const Text('导入 CSV'),
                     subtitle: const Text('从 CSV 文件导入账单（跳过重复记录）'),
                     onTap: _importCsv,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.account_balance_wallet, color: Colors.purple),
+                    title: const Text('导入微信/支付宝账单'),
+                    subtitle: const Text('补记 App 内转账等没有通知的消费'),
+                    onTap: _importBill,
+                    trailing: IconButton(
+                      icon: const Icon(Icons.help_outline),
+                      tooltip: '怎么导出账单',
+                      onPressed: _showBillHelp,
+                    ),
                   ),
                   const Divider(height: 1),
                   ListTile(
@@ -288,6 +364,10 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     const SizedBox(height: 4),
                     Text(
                       '支持 Android 支付通知自动记账，iOS 支持手动记账。',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                    ),
+                    Text(
+                      '微信/支付宝 App 内转账不会发通知，可用「导入微信/支付宝账单」补记。',
                       style: TextStyle(color: Colors.grey[600], fontSize: 14),
                     ),
                     const SizedBox(height: 12),

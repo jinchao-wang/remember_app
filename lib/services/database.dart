@@ -20,7 +20,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'remember_local.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
 CREATE TABLE transactions(
@@ -32,10 +32,24 @@ CREATE TABLE transactions(
   date TEXT NOT NULL,
   isAuto INTEGER NOT NULL DEFAULT 0,
   isEdited INTEGER NOT NULL DEFAULT 0,
-  sourceApp TEXT
+  sourceApp TEXT,
+  externalId TEXT
 )
 ''');
         await db.execute('CREATE INDEX idx_transactions_date ON transactions(date)');
+        await db.execute(
+          'CREATE INDEX idx_transactions_external ON transactions(externalId)',
+        );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v2：账单导入需要用平台交易单号精确判重，加一列可空的 externalId。
+        // 加列而不是重建表，是为了不丢用户已有的记录。
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE transactions ADD COLUMN externalId TEXT');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_transactions_external ON transactions(externalId)',
+          );
+        }
       },
     );
   }

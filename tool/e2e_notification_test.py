@@ -311,7 +311,10 @@ def main():
     check("App 停止期间不立即落库（事件进了原生缓存）", len(rows()) == before,
           f"before={before} now={len(rows())}")
     shell(f"am start -n {PKG}/.MainActivity")
-    deadline = time.time() + 20
+    # debug 包冷启动在负载较高的模拟器上要 18 秒以上（Activity 才算 displayed），
+    # 补记发生在 Dart 侧起来之后，所以这里必须给足等待时间，
+    # 否则会被误判成「补记失败」。
+    deadline = time.time() + 90
     rec = None
     while time.time() < deadline:
         r = rows()
