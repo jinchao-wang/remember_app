@@ -89,6 +89,33 @@ class PaymentParserTest {
     }
 
     @Test
+    fun `收到转账记为收入而不是支出`() {
+        // 只命中歧义词「转账」时默认按流出处理，会把收款记反方向。
+        val r = parse("微信支付 收到转账 14.52元")
+        assertNotNull(r)
+        assertEquals(PaymentParser.TYPE_INCOME, r!!.type)
+        assertEquals(14.52, r.amount, 0.0001)
+    }
+
+    @Test
+    fun `微信真实付款通知文案可以解析`() {
+        // 真实通知正文形如：
+        // 「微信支付」—「你于2026年10月20日,使用付款功能交易成功支付12.50元」
+        val r = parse("微信支付 你于2026年10月20日,使用付款功能交易成功支付12.50元")
+        assertNotNull(r)
+        assertEquals(PaymentParser.TYPE_EXPENSE, r!!.type)
+        assertEquals(12.50, r.amount, 0.0001)
+    }
+
+    @Test
+    fun `银行尾号消费通知可以解析`() {
+        val r = parse("招商银行 您尾号8888的储蓄卡于10月20日消费 20.58元")
+        assertNotNull(r)
+        assertEquals(PaymentParser.TYPE_EXPENSE, r!!.type)
+        assertEquals(20.58, r.amount, 0.0001)
+    }
+
+    @Test
     fun `品牌名里的支付不会把收款通知误判成支出`() {
         // 标题「微信支付」含「支付」二字，不能因此把收款当成付款。
         val r = parse("微信支付 收款 ¥12.50")

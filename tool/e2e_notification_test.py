@@ -88,6 +88,58 @@ def check(name, cond, detail=""):
     log(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
 
 
+def listener_granted():
+    out = shell("settings get secure enabled_notification_listeners")
+    return PKG in out
+
+
+def ensure_listener():
+    """授权通知监听并确认真的生效。
+
+    注意：pm clear / 重装会把系统的通知监听授权一起冲掉，
+    而且 install 刚结束时调用 allow_listener 可能不生效（包还在安装收尾），
+    所以这里要「授权 -> 校验 -> 重试」，不能只调一次就算数。
+    """
+    comp = f"{PKG}/{PKG}.PaymentNotificationListenerService"
+    for attempt in range(6):
+        shell(f"cmd notification allow_listener {comp}")
+        time.sleep(1.5)
+        if listener_granted():
+            log(f"  通知监听授权已生效（第 {attempt + 1} 次尝试）")
+            return True
+        log(f"  通知监听授权未生效，重试（{attempt + 1}/6）")
+        time.sleep(2)
+    return False
+
+
+def wait_listener_connected(timeout=30):
+    """等原生监听服务真正连上，否则第一条通知会落在绑定窗口里被丢掉。"""
+    end = time.time() + timeout
+    while time.time() < end:
+        if "通知监听已连接" in shell("logcat -d -v time -s PaymentListener:V"):
+            return True
+        time.sleep(1.5)
+    return False
+
+
+def warm_up(attempts=5):
+    """用一条预热通知实测监听是否真的活着。
+
+    只看「通知监听已连接」日志不够：那条日志只在连接瞬间打一次，
+    如果此前已经连上，清过 logcat 就再也等不到它。
+    """
+    for i in range(attempts):
+        shell("logcat -c")
+        post("warmup", "预热探测", "收款 ¥0.01")
+        time.sleep(3)
+        if "detected:" in shell("logcat -d -v time -s PaymentListener:V"):
+            log(f"  预热成功，监听已就绪（第 {i + 1} 次尝试）")
+            return True
+        log(f"  预热未命中（监听可能还在绑定中），重试 {i + 1}/{attempts}")
+        time.sleep(2)
+    return False
+
+
 def expect_record(tag, title, text, big=False, timeout=10):
     """投递一条通知，返回新落库的记录（没有则返回 None）。"""
     before = len(rows())
@@ -122,10 +174,15 @@ def main():
     time.sleep(1)
     r = subprocess.run([ADB, "-s", DEVICE, "install", "-r", "-g", APK], capture_output=True, text=True)
     log("安装：" + (r.stdout or "").strip())
-    shell(f"cmd notification allow_listener {PKG}/{PKG}.PaymentNotificationListenerService")
-    time.sleep(1.5)
+    if not ensure_listener():
+        log("通知监听授权失败，无法继续")
+        return 2
     shell(f"am start -n {PKG}/.MainActivity")
-    time.sleep(7)
+    time.sleep(5)
+    if not warm_up():
+        log("监听服务始终没有就绪")
+        return 2
+    # 预热记录留在库里也无妨：后续用例都用「前后条数差」判断，不受影响。
 
     # ------------------------------------------------------------ 基础链路
     log("\n=== A. 端到端主链路 ===")
