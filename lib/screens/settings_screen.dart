@@ -16,10 +16,13 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<SettingsScreen> createState() => SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
+/// 状态类对外公开，是为了让 [HomeScreen] 能在切到「设置」页签时
+/// 主动调一次刷新——否则页面停在上一次打开时的快照，
+/// 用户会看到「还没有收到疑似支付类的通知」而实际上通知已经到了。
+class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
   bool _listening = false;
   bool _checking = true;
   ListenerDiagnostics? _diagnostics;
@@ -44,7 +47,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     // 否则界面会一直显示「未开启」。
     if (state == AppLifecycleState.resumed) {
       _checkNotificationStatus();
+      refreshDiagnostics();
     }
+  }
+
+  /// 重新拉取诊断信息（授权状态 + 最近收到的通知）。
+  ///
+  /// 公开出来给 [HomeScreen] 调用：切到设置页签时拉一次，
+  /// 用户不用记得点「刷新」才能看到刚到的通知。
+  Future<void> refreshDiagnostics() async {
+    await _checkNotificationStatus();
+    await _loadDiagnostics();
   }
 
   Future<void> _checkNotificationStatus() async {

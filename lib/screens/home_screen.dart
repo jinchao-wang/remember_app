@@ -22,6 +22,10 @@ class _HomeScreenState extends State<HomeScreen>
   /// 通知监听的诊断信息。用于在首页提示「自动记账没在工作」。
   ListenerDiagnostics? _diagnostics;
 
+  /// 用来在切到「设置」页签时让设置页自己刷新一次诊断。
+  final GlobalKey<SettingsScreenState> _settingsKey =
+      GlobalKey<SettingsScreenState>();
+
   @override
   void initState() {
     super.initState();
@@ -155,10 +159,21 @@ class _HomeScreenState extends State<HomeScreen>
       _index = index;
     });
     _fabAnimationController.reset();
+    // 切到设置页时重新拉一次诊断。
+    //
+    // 设置页在 IndexedStack 里一直活着，它显示的是「上次打开时的快照」。
+    // 用户付完钱切过来却看到「还没有收到疑似支付类的通知」，
+    // 就会误以为系统没把通知送过来——这正是「有通知但没记账」的错觉来源。
+    if (index == 2) {
+      _settingsKey.currentState?.refreshDiagnostics();
+      _refreshDiagnostics();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // 先取一次，避免同一个告警条被构建两遍。
+    final banner = _buildWarningBanner();
     return Scaffold(
       appBar: AppBar(
         title: Text(_getCurrentTitle()),
@@ -171,14 +186,14 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       body: Column(
         children: [
-          if (_buildWarningBanner() != null) _buildWarningBanner()!,
+          if (banner != null) banner,
           Expanded(
             child: IndexedStack(
               index: _index,
-              children: const [
-                TransactionListScreen(),
-                StatsScreen(),
-                SettingsScreen(),
+              children: [
+                const TransactionListScreen(),
+                const StatsScreen(),
+                SettingsScreen(key: _settingsKey),
               ],
             ),
           ),
