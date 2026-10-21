@@ -8,6 +8,7 @@ import '../models/transaction.dart';
 import '../services/app_state.dart';
 import '../services/bill_import_service.dart';
 import '../services/database.dart';
+import '../services/listener_diagnostics.dart';
 import '../utils/bill_parser.dart';
 import '../utils/csv_helper.dart';
 
@@ -21,6 +22,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
   bool _listening = false;
   bool _checking = true;
+  ListenerDiagnostics? _diagnostics;
   static const _platform = MethodChannel('remember/payment_listener');
 
   @override
@@ -57,6 +59,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     } catch (_) {
       if (mounted) setState(() => _checking = false);
     }
+    await _loadDiagnostics();
+  }
+
+  /// 拉取诊断信息：服务有没有真的连上、最近收到了什么通知。
+  Future<void> _loadDiagnostics() async {
+    final diag = await ListenerDiagnosticsService.fetch();
+    if (!mounted) return;
+    setState(() => _diagnostics = diag);
   }
 
   Future<void> _openNotificationSettings() async {
@@ -248,6 +258,263 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     );
   }
 
+  /// 自动记账卡片。
+  ///
+  /// 除了「有没有授权」，还要能回答「服务到底连上了没」「收到的通知长什么样」
+  /// 「为什么没记」——否则用户只看到一句「通知监听已开启」，问题就卡死在黑盒里。
+  Widget _buildAutoRecordCard() {
+    final diag = _diagnostics;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  _listening ? Icons.check_circle : Icons.warning,
+                  color: _listening ? Colors.green : Colors.orange,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _checking
+                            ? '检查中...'
+                            : (_listening ? '通知监听已开启' : '通知监听未开启'),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _statusSubtitle(diag),
+                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (!_listening) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _openNotificationSettings,
+                  icon: const Icon(Icons.settings),
+                  label: const Text('前往设置开启'),
+                ),
+              ),
+            ] else if (diag != null) ...[
+              const SizedBox(height: 12),
+              _buildServiceState(diag),
+              if (!diag.serviceLooksConnected) ...[
+                const SizedBox(height: 12),
+                _buildRomHints(),
+              ],
+            ],
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            _buildRecentNotifications(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 状态标题下面那行说明。
+  String _statusSubtitle(ListenerDiagnostics? diag) {
+    if (_checking) return '';
+    if (!_listening) return '需在系统设置中开启通知权限，支付通知才能自动记录';
+    if (diag == null) return '支付通知将自动记录为账单';
+    if (!diag.serviceEverConnected) {
+      return '已授权，但系统还没有拉起过监听服务，目前收不到任何通知';
+    }
+    return '支付通知将自动记录为账单';
+  }
+
+  /// 服务连接状态与「最近一次收到通知」的时间。
+  Widget _buildServiceState(ListenerDiagnostics diag) {
+    final alive = diag.serviceLooksConnected;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: alive ? Colors.green.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _diagRow(
+            Icons.sensors,
+            '监听服务',
+            alive ? '已连接' : '未连接',
+            '上次连接：${_timeAgo(diag.serviceConnectedAt)}',
+          ),
+          const SizedBox(height: 6),
+          _diagRow(
+            Icons.notifications_active,
+            '最近收到通知',
+            _timeAgo(diag.lastNotificationAt),
+            '',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _diagRow(IconData icon, String label, String value, String hint) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            textAlign: TextAlign.right,
+          ),
+        ),
+        if (hint.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Text(hint, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          ),
+      ],
+    );
+  }
+
+  /// 国产 ROM 的自启动 / 电池优化提示与入口。
+  Widget _buildRomHints() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '部分国产系统（小米 / 华为 / OPPO / vivo 等）会限制后台服务，'
+          '系统勾了「通知使用权」也不一定能把监听服务拉起来。'
+          '如果一直没收到通知，请允许本 App 自启动，并把它加入电池优化白名单。',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () => ListenerDiagnosticsService.openAutoStartSettings(),
+              icon: const Icon(Icons.rocket_launch, size: 18),
+              label: const Text('允许自启动'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => ListenerDiagnosticsService.openBatteryOptimizationSettings(),
+              icon: const Icon(Icons.battery_saver, size: 18),
+              label: const Text('电池优化白名单'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => ListenerDiagnosticsService.openAppSettings(),
+              icon: const Icon(Icons.settings, size: 18),
+              label: const Text('应用设置'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 最近收到的通知（含没被记账的），用来回答「到底收到没有」。
+  Widget _buildRecentNotifications() {
+    final list = _diagnostics?.recentNotifications ?? const <NotificationRecord>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text('最近收到的通知', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            TextButton.icon(
+              onPressed: _loadDiagnostics,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('刷新'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (list.isEmpty)
+          const Text(
+            '还没有收到疑似支付类的通知。付一笔钱之后回来刷新，就能看到系统到底送来了什么。',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          )
+        else
+          ...list.take(10).map(_buildNotificationRow),
+        const SizedBox(height: 8),
+        const Text(
+          '仅在本机保存最近 20 条通知原文用于排查，不联网、不上传。',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNotificationRow(NotificationRecord r) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            r.recognized ? Icons.check_circle : Icons.error_outline,
+            size: 18,
+            color: r.recognized ? Colors.green : Colors.orange,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${r.title.isEmpty ? r.packageName : r.title} · ${_timeAgo(r.time)}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  r.summary,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  r.recognized ? '已记账：${r.reason}' : '未记账：${r.reason}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: r.recognized ? Colors.green : Colors.orange,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 「x 分钟前」这样的相对时间。
+  String _timeAgo(DateTime? time) {
+    if (time == null) return '从未';
+    final diff = DateTime.now().difference(time);
+    if (diff.isNegative || diff.inSeconds < 60) return '刚刚';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
+    if (diff.inHours < 24) return '${diff.inHours} 小时前';
+    return '${diff.inDays} 天前';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -298,54 +565,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
             const SizedBox(height: 32),
             const Text('自动记账（仅 Android）', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          _listening ? Icons.check_circle : Icons.warning,
-                          color: _listening ? Colors.green : Colors.orange,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _checking ? '检查中...' : (_listening ? '通知监听已开启' : '通知监听未开启'),
-                                style: const TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _checking ? '' : (_listening
-                                    ? '支付通知将自动记录为账单'
-                                    : '需在系统设置中开启通知权限，支付通知才能自动记录'),
-                                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (!_listening) ...[
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _openNotificationSettings,
-                          icon: const Icon(Icons.settings),
-                          label: const Text('前往设置开启'),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+            _buildAutoRecordCard(),
             const SizedBox(height: 32),
             const Text('关于', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),

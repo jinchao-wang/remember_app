@@ -202,4 +202,46 @@ class PaymentParserTest {
     fun `日期里的连字符不会被当成负号`() {
         assertNull(parse("账单助手 2024-10-05 ¥9.99"))
     }
+
+    // ------------------------------------------------------------ 失败原因诊断
+    //
+    // 用户报「有通知但没记账」时，必须能说清楚到底卡在哪一步：
+    // 是没金额，还是没方向。这两种原因在 App 里要分别显示。
+
+    @Test
+    fun `诊断会说明识别成功`() {
+        val d = PaymentParser.diagnose("微信支付 付款成功 ¥12.50")
+        assertNotNull(d.result)
+        assertEquals(12.5, d.result!!.amount, 0.0001)
+        assertEquals("已识别", d.reason)
+    }
+
+    @Test
+    fun `诊断会说明缺少金额`() {
+        val d = PaymentParser.diagnose("微信支付 支付成功")
+        assertNull(d.result)
+        assertEquals("判断出了收支方向，但没找到金额", d.reason)
+    }
+
+    @Test
+    fun `诊断会说明缺少方向`() {
+        val d = PaymentParser.diagnose("微信支付 ¥54.54")
+        assertNull(d.result)
+        assertEquals("没有收支关键词，也没有金额正负号", d.reason)
+    }
+
+    @Test
+    fun `诊断会说明正文为空`() {
+        val d = PaymentParser.diagnose("   ")
+        assertNull(d.result)
+        assertEquals("通知正文为空", d.reason)
+    }
+
+    @Test
+    fun `诊断会说明是按正负号判断的方向`() {
+        val d = PaymentParser.diagnose("微信支付 +¥9.99")
+        assertNotNull(d.result)
+        assertEquals(PaymentParser.TYPE_INCOME, d.result!!.type)
+        assertEquals("按金额正负号判断方向", d.reason)
+    }
 }

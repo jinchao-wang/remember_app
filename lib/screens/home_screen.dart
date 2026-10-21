@@ -4,6 +4,7 @@ import 'package:remember_app/screens/transaction_list_screen.dart';
 import 'package:remember_app/screens/stats_screen.dart';
 import 'package:remember_app/screens/settings_screen.dart';
 import 'package:remember_app/screens/add_edit_screen.dart';
+import 'package:remember_app/services/listener_diagnostics.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,10 +13,14 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   int _index = 0;
   late AnimationController _fabAnimationController;
   late Animation<double> _fabRotation;
+
+  /// 通知监听的诊断信息。用于在首页提示「自动记账没在工作」。
+  ListenerDiagnostics? _diagnostics;
 
   @override
   void initState() {
@@ -27,12 +32,73 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _fabRotation = Tween<double>(begin: 0.0, end: 0.25 * math.pi).animate(
       CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut),
     );
+    WidgetsBinding.instance.addObserver(this);
+    _refreshDiagnostics();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fabAnimationController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 用户可能刚去系统设置开了权限，回来时刷新一下。
+    if (state == AppLifecycleState.resumed) {
+      _refreshDiagnostics();
+    }
+  }
+
+  Future<void> _refreshDiagnostics() async {
+    final diag = await ListenerDiagnosticsService.fetch();
+    if (!mounted) return;
+    setState(() => _diagnostics = diag);
+  }
+
+  /// 首页顶部的告警条。
+  ///
+  /// 「通知监听已开启」这种状态藏在设置页里，用户不会去看。
+  /// 自动记账没工作却没有任何提示，是「有通知但没记账」这类问题的根源之一。
+  Widget? _buildWarningBanner() {
+    final diag = _diagnostics;
+    if (diag == null) return null;
+
+    final String message;
+    final IconData icon;
+    if (!diag.listenerEnabled) {
+      message = '自动记账未开启：支付通知不会被记录，去「设置 → 自动记账」开启通知使用权';
+      icon = Icons.warning_amber;
+    } else if (!diag.serviceEverConnected) {
+      message = '自动记账未生效：已授权但系统还没拉起监听服务，去「设置 → 自动记账」查看排查指引';
+      icon = Icons.error_outline;
+    } else {
+      return null;
+    }
+
+    return Material(
+      color: Colors.orange.shade50,
+      child: InkWell(
+        onTap: () => setState(() => _index = 2),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: Colors.orange.shade900),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(fontSize: 12, color: Colors.black87),
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _showAddScreen() async {
@@ -103,12 +169,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _index,
-        children: const [
-          TransactionListScreen(),
-          StatsScreen(),
-          SettingsScreen(),
+      body: Column(
+        children: [
+          if (_buildWarningBanner() != null) _buildWarningBanner()!,
+          Expanded(
+            child: IndexedStack(
+              index: _index,
+              children: const [
+                TransactionListScreen(),
+                StatsScreen(),
+                SettingsScreen(),
+              ],
+            ),
+          ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

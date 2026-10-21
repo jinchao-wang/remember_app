@@ -15,6 +15,54 @@ object PaymentParser {
     data class Result(val amount: Double, val type: String)
 
     /**
+     * 带失败原因的解析结果。
+     *
+     * 用户报「有通知但没记账」时，光知道没记上没用，得知道为什么：
+     * 是没找到金额，还是没判断出收支方向。这两个原因要分开报给用户看。
+     */
+    data class Diagnosis(val result: Result?, val reason: String)
+
+    /**
+     * 解析一条通知正文，并给出失败原因。
+     */
+    fun diagnose(rawContent: String): Diagnosis {
+        if (rawContent.isBlank()) return Diagnosis(null, "通知正文为空")
+
+        // 等长替换，保留字符下标，金额候选的位置才对得上。
+        val content = walletNames.fold(rawContent) { acc, name ->
+            acc.replace(name, " ".repeat(name.length))
+        }
+
+        val isExpense = expenseKeywords.any { content.contains(it) }
+        val isIncome = incomeKeywords.any { content.contains(it) }
+        val isAmbiguous = ambiguousKeywords.any { content.contains(it) }
+
+        if (!isExpense && !isIncome && !isAmbiguous) {
+            // 没有任何方向线索：只能靠金额前的正负号。
+            // 连正负号都没有就宁可漏记——方向猜错会往账本里塞一条错误的收支。
+            val signed = signedRegex.find(content)
+                ?: return Diagnosis(null, "没有收支关键词，也没有金额正负号")
+            val value = signed.groupValues[2].replace(",", "").toDoubleOrNull()
+                ?: return Diagnosis(null, "金额格式无法解析")
+            val type = if (signed.groupValues[1] == "+") TYPE_INCOME else TYPE_EXPENSE
+            return Diagnosis(Result(value, type), "按金额正负号判断方向")
+        }
+
+        val type = resolveType(isExpense, isIncome)
+        val anchor = findAnchor(content, isExpense, isIncome)
+        val amount = pickAmount(content, anchor)
+            ?: return Diagnosis(null, "判断出了收支方向，但没找到金额")
+        return Diagnosis(Result(amount, type), "已识别")
+    }
+
+    /**
+     * 解析一条通知正文。
+     *
+     * @return 能识别出金额和收支方向时返回结果，否则 null（表示不记账）。
+     */
+    fun parse(rawContent: String): Result? = diagnose(rawContent).result
+
+    /**
      * 支出方向词。
      *
      * 「支付」「付款」是裸词，而通知标题几乎总是「微信支付」这类品牌名，
@@ -77,38 +125,6 @@ object PaymentParser {
      */
     private val signedRegex =
         Regex("""(?<![\d])([+-])\s*(?:¥|￥|RMB)\s*(\d{1,9}(?:,\d{3})*(?:\.\d{1,2})?)""")
-
-    /**
-     * 解析一条通知正文。
-     *
-     * @return 能识别出金额和收支方向时返回结果，否则 null（表示不记账）。
-     */
-    fun parse(rawContent: String): Result? {
-        if (rawContent.isBlank()) return null
-
-        // 等长替换，保留字符下标，金额候选的位置才对得上。
-        val content = walletNames.fold(rawContent) { acc, name ->
-            acc.replace(name, " ".repeat(name.length))
-        }
-
-        val isExpense = expenseKeywords.any { content.contains(it) }
-        val isIncome = incomeKeywords.any { content.contains(it) }
-        val isAmbiguous = ambiguousKeywords.any { content.contains(it) }
-
-        if (!isExpense && !isIncome && !isAmbiguous) {
-            // 没有任何方向线索：只能靠金额前的正负号。
-            // 连正负号都没有就宁可漏记——方向猜错会往账本里塞一条错误的收支。
-            val signed = signedRegex.find(content) ?: return null
-            val value = signed.groupValues[2].replace(",", "").toDoubleOrNull() ?: return null
-            val type = if (signed.groupValues[1] == "+") TYPE_INCOME else TYPE_EXPENSE
-            return Result(value, type)
-        }
-
-        val type = resolveType(isExpense, isIncome)
-        val anchor = findAnchor(content, isExpense, isIncome)
-        val amount = pickAmount(content, anchor) ?: return null
-        return Result(amount, type)
-    }
 
     /**
      * 收支方向判定。收入词与支出词同时命中时以支出为准（保持原有行为），

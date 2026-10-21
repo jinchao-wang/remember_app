@@ -1,10 +1,9 @@
 package com.example.remember_app
 
-import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -32,6 +31,23 @@ class MainActivity : FlutterActivity() {
                 }
                 "openNotificationSettings" -> {
                     openNotificationSettings()
+                    result.success(true)
+                }
+                // 诊断信息：服务有没有真的连上、最近收到了什么通知、为什么没记。
+                "getDiagnostics" -> {
+                    val enabled = PaymentNotificationListenerService.isNotificationListeningEnabled(this)
+                    result.success(ListenerDiagnostics.snapshot(this, enabled))
+                }
+                "openAppSettings" -> {
+                    openAppSettings()
+                    result.success(true)
+                }
+                "openBatteryOptimizationSettings" -> {
+                    openBatteryOptimizationSettings()
+                    result.success(true)
+                }
+                "openAutoStartSettings" -> {
+                    openAutoStartSettings()
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -79,13 +95,77 @@ class MainActivity : FlutterActivity() {
             }
             startActivity(intent)
         } else {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
+            openAppSettings()
         }
     }
+
+    /** 应用详情页：国产 ROM 的「自启动」「电池策略」入口都在这里。 */
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    /** 系统「电池优化」白名单列表页。 */
+    private fun openBatteryOptimizationSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+                // 有些 ROM 没有这个页面，退回应用详情页。
+            }
+        }
+        openAppSettings()
+    }
+
+    /**
+     * 打开「自启动管理」页面。
+     *
+     * 小米 / 华为 / OPPO / vivo / 荣耀 各家的组件名都不一样，
+     * 这里挨个试，都不行就退回应用详情页（多数 ROM 在那里也有入口）。
+     */
+    private fun openAutoStartSettings() {
+        val candidates = listOf(
+            // 小米 MIUI / HyperOS
+            "com.miui.securitycenter/com.miui.permcenter.autostart.AutoStartManagementActivity",
+            // 华为 EMUI / 鸿蒙
+            "com.huawei.systemmanager/com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            // 荣耀 MagicOS
+            "com.hihonor.systemmanager/com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            // OPPO ColorOS
+            "com.coloros.safecenter/com.coloros.safecenter.permission.startup.StartupAppListActivity",
+            "com.coloros.safecenter/com.coloros.safecenter.startupapp.StartupAppListActivity",
+            // vivo / iQOO
+            "com.vivo.permissionmanager/com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+            "com.iqoo.secure/com.iqoo.secure.ui.phoneoptimize.BgStartUpManager",
+        )
+
+        for (name in candidates) {
+            val component = ComponentName.unflattenFromString(name) ?: continue
+            val intent = Intent().setComponent(component)
+            if (resolveActivitySafely(intent) == null) continue
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+                // 换下一个候选。
+            }
+        }
+        openAppSettings()
+    }
+
+    private fun resolveActivitySafely(intent: Intent) =
+        try {
+            packageManager.resolveActivity(intent, 0)
+        } catch (_: Exception) {
+            null
+        }
 
     companion object {
         private const val CHANNEL = "remember/payment_listener"
