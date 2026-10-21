@@ -19,7 +19,14 @@ object ListenerDiagnostics {
     private const val KEY_CONNECTED_AT = "connectedAt"
     private const val KEY_DISCONNECTED_AT = "disconnectedAt"
     private const val KEY_NOTIFS = "notifs"
-    private const val MAX_NOTIFS = 20
+
+    /**
+     * 保留多少条历史通知。
+     *
+     * 存 50 条而不是 20 条：用户微信里聊几句天就可能把真正的支付通知顶出缓冲区，
+     * 那样「最近收到通知」里就找不到要排查的那条了。体积只有几 KB。
+     */
+    private const val MAX_NOTIFS = 50
 
     /** 监听服务连上系统时调用。 */
     fun recordConnected(context: Context) {

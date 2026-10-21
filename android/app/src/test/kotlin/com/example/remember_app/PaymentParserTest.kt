@@ -1,8 +1,10 @@
 package com.example.remember_app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -35,6 +37,30 @@ class PaymentParserTest {
         assertNotNull(r)
         assertEquals(88.0, r!!.amount, 0.0001)
         assertEquals(PaymentParser.TYPE_EXPENSE, r.type)
+    }
+
+    @Test
+    fun `支付宝到账记为收入`() {
+        // 「支付宝」里含「支付」二字，早先没被剥掉，导致这条被误判成支出。
+        // 收入记成支出比不记还糟，必须单独盯住。
+        val r = parse("支付宝 到账 ¥12.00")
+        assertNotNull(r)
+        assertEquals(12.0, r!!.amount, 0.0001)
+        assertEquals(PaymentParser.TYPE_INCOME, r.type)
+    }
+
+    @Test
+    fun `支付宝收款记为收入`() {
+        val r = parse("支付宝 收款 ¥12.00")
+        assertNotNull(r)
+        assertEquals(PaymentParser.TYPE_INCOME, r!!.type)
+    }
+
+    @Test
+    fun `翼支付到账记为收入`() {
+        val r = parse("翼支付 到账 ¥12.00")
+        assertNotNull(r)
+        assertEquals(PaymentParser.TYPE_INCOME, r!!.type)
     }
 
     @Test
@@ -243,5 +269,39 @@ class PaymentParserTest {
         assertNotNull(d.result)
         assertEquals(PaymentParser.TYPE_INCOME, d.result!!.type)
         assertEquals("按金额正负号判断方向", d.reason)
+    }
+
+    // ------------------------------------------------------------ 疑似支付判定
+    //
+    // 这个判定只决定「要不要记进诊断列表」。
+    // 条件一旦过窄，用户付了钱却看到「最近收到通知：从未」，排查就断在第一步，
+    // 所以「有方向词但没金额」这类通知也必须被记下来。
+
+    @Test
+    fun `疑似支付判定会认出带金额的通知`() {
+        assertTrue(PaymentParser.looksFinancial("微信支付 ¥31.31"))
+        assertTrue(PaymentParser.looksFinancial("微信支付 付款成功 88.00"))
+        assertTrue(PaymentParser.looksFinancial("微信支付 收款 12元"))
+    }
+
+    @Test
+    fun `疑似支付判定会认出没有金额但有方向词的通知`() {
+        assertTrue(PaymentParser.looksFinancial("微信支付 你有一笔支出"))
+        assertTrue(PaymentParser.looksFinancial("微信支付 交易成功"))
+        assertTrue(PaymentParser.looksFinancial("支付宝 到账提醒"))
+    }
+
+    @Test
+    fun `疑似支付判定会忽略普通聊天通知`() {
+        assertFalse(PaymentParser.looksFinancial("张三: 今晚一起吃饭吗"))
+        assertFalse(PaymentParser.looksFinancial(""))
+        assertFalse(PaymentParser.looksFinancial("   "))
+    }
+
+    @Test
+    fun `疑似支付判定会忽略只有裸数字的无关通知`() {
+        // 天气通知带小数，但不是支付，别让它挤进诊断列表。
+        assertFalse(PaymentParser.looksFinancial("天气 明天晴 25.00 摄氏度"))
+        assertFalse(PaymentParser.looksFinancial("版本 8.12 更新"))
     }
 }

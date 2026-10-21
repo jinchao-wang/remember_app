@@ -101,12 +101,11 @@ class PaymentNotificationListenerService : NotificationListenerService() {
      * 只记录「疑似支付类」的通知。
      *
      * 全量记录会把聊天消息也存下来，既没必要也不该；
-     * 而带金额或带「元/¥」的通知基本就是支付提醒，正是用户要排查的那类。
+     * 判定逻辑放在 PaymentParser 里（纯 Kotlin，有单测覆盖），
+     * 条件刻意放宽，见 [PaymentParser.looksFinancial]。
      */
-    private fun looksFinancial(content: String): Boolean {
-        if (AMOUNT_PATTERN.containsMatchIn(content)) return true
-        return content.contains("元") || content.contains("¥") || content.contains("￥")
-    }
+    private fun looksFinancial(content: String): Boolean =
+        PaymentParser.looksFinancial(content)
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -122,9 +121,6 @@ class PaymentNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "PaymentListener"
-
-        /** 形如 31.31 / 1,234.56 的金额。 */
-        private val AMOUNT_PATTERN = Regex("""\d{1,9}(?:,\d{3})*\.\d{2}""")
 
         fun isNotificationListeningEnabled(context: Context): Boolean {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {

@@ -256,6 +256,13 @@ def main():
           rec is not None and rec["type"] == "expense" and abs(rec["amount"] - 3333.33) < .001,
           str(rec))
 
+    # 「支付宝」含「支付」二字，早先没从正文里剥掉，
+    # 导致这条收入通知被当成支出——收入记成支出比不记还糟。
+    rec = expect_record("e2b", "支付宝", "到账 ¥12.00")
+    check("「支付宝 到账」-> income（品牌名不能当方向词）",
+          rec is not None and rec["type"] == "income" and abs(rec["amount"] - 12.00) < .001,
+          str(rec))
+
     rec = expect_record("e3", "微信支付", "提现到零钱 ¥4444.44")
     check("「提现」-> expense",
           rec is not None and rec["type"] == "expense" and abs(rec["amount"] - 4444.44) < .001,

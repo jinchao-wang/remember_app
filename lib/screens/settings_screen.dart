@@ -450,14 +450,16 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         const SizedBox(height: 4),
         if (list.isEmpty)
           const Text(
-            '还没有收到疑似支付类的通知。付一笔钱之后回来刷新，就能看到系统到底送来了什么。',
+            '还没有收到疑似支付类的通知。付一笔钱之后回来刷新，就能看到系统到底送来了什么。\n'
+            '如果已经付过钱、这里却还是空的，说明系统根本没把通知送过来——'
+            '通常是国产 ROM 限制了后台服务，按上面的「允许自启动」「电池优化白名单」处理即可。',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           )
         else
-          ...list.take(10).map(_buildNotificationRow),
+          ...list.take(20).map(_buildNotificationRow),
         const SizedBox(height: 8),
         const Text(
-          '仅在本机保存最近 20 条通知原文用于排查，不联网、不上传。',
+          '仅在本机保存最近 50 条通知原文用于排查，不联网、不上传。',
           style: TextStyle(fontSize: 11, color: Colors.grey),
         ),
       ],
