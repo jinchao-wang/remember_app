@@ -106,4 +106,59 @@ void main() {
       expect(r.summary, '(空通知)');
     });
   });
+
+  group('通知记录的金额与补记', () {
+    NotificationRecord build(Map<String, dynamic> extra) =>
+        NotificationRecord.fromMap(<String, dynamic>{
+          'packageName': 'com.tencent.mm',
+          'title': '微信支付',
+          'text': '¥31.31',
+          'recognized': false,
+          'reason': '没有收支关键词，也没有金额正负号',
+          'timestamp': 1000,
+          ...extra,
+        });
+
+    test('能读出金额且没记账 -> 可以手动补记', () {
+      final r = build({'amount': 31.31});
+
+      expect(r.amount, 31.31);
+      expect(r.recorded, isFalse);
+      expect(r.canManuallyRecord, isTrue);
+    });
+
+    test('已经自动记账的 -> 不给补记入口', () {
+      final r = build({'amount': 31.31, 'recognized': true});
+
+      expect(r.canManuallyRecord, isFalse);
+    });
+
+    test('已经手动补记过的 -> 不给补记入口', () {
+      final r = build({'amount': 31.31, 'recorded': true});
+
+      expect(r.canManuallyRecord, isFalse);
+    });
+
+    test('读不出金额的 -> 不给补记入口', () {
+      final r = build({'reason': '通知正文为空', 'text': ''});
+
+      expect(r.amount, isNull);
+      expect(r.canManuallyRecord, isFalse);
+    });
+
+    test('金额为 0 的 -> 不给补记入口', () {
+      final r = build({'amount': 0.0});
+      expect(r.canManuallyRecord, isFalse);
+    });
+
+    test('标题和正文拼起来就是通知原文', () {
+      final r = build({'text': '收款到账 ¥66.60'});
+      expect(r.fullText, '微信支付 收款到账 ¥66.60');
+    });
+
+    test('只有标题时原文就是标题', () {
+      final r = build({'text': ''});
+      expect(r.fullText, '微信支付');
+    });
+  });
 }

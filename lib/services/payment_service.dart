@@ -30,7 +30,9 @@ class PaymentService {
   /// - [dedupeWindow] 内已存在同来源 + 同金额 + **同收支方向**的自动账单 -> 跳过
   /// - 用户手动编辑过的记录保持原样，不会被后续通知覆盖
   /// - 其余情况新增一条自动账单
-  Future<void> handleEvent(PaymentEvent event) async {
+  ///
+  /// @return true 表示真的新增了一条；false 表示判重命中，没有重复记录。
+  Future<bool> handleEvent(PaymentEvent event) async {
     final db = await DatabaseHelper.instance.database;
     // 用事件自身的发生时间，而不是「现在」：
     // 原生层会缓存 App 未运行期间的通知，补记时必须还原原始日期。
@@ -50,7 +52,7 @@ class PaymentService {
         eventAmount: event.amount,
         eventTime: eventTime,
       )) {
-        return;
+        return false;
       }
     }
 
@@ -66,6 +68,7 @@ class PaymentService {
     );
     await DatabaseHelper.instance.insertTransaction(tx);
     AppState.instance.bump();
+    return true;
   }
 
   String _guessCategory(PaymentEvent event) {

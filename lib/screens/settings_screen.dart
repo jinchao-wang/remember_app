@@ -499,12 +499,79 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     color: r.recognized ? Colors.green : Colors.orange,
                   ),
                 ),
+                if (_canManuallyRecord(r)) ...[
+                  const SizedBox(height: 6),
+                  _buildManualRecordButtons(r),
+                ],
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// 这条通知能不能手动补记。
+  ///
+  /// 只有「读得出金额、但没自动记账、也没补记过」的才给按钮：
+  /// 没有金额就无从补记，已经记过的不该再给。
+  bool _canManuallyRecord(NotificationRecord r) => r.canManuallyRecord;
+
+  /// 「记为支出 / 记为收入」两个按钮。
+  ///
+  /// 方向让用户自己选，是因为 App 无法从「¥31.31」这种通知里判断是收还是付；
+  /// 猜错方向往账本里塞一条错误的收支，比不记还糟。
+  Widget _buildManualRecordButtons(NotificationRecord r) {
+    final amount = r.amount ?? 0;
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => _manualRecord(r, 'expense'),
+            icon: const Icon(Icons.arrow_downward, size: 16),
+            label: Text('记为支出 ¥${amount.toStringAsFixed(2)}'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => _manualRecord(r, 'income'),
+            icon: const Icon(Icons.arrow_upward, size: 16),
+            label: Text('记为收入 ¥${amount.toStringAsFixed(2)}'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 手动补记一条通知。
+  Future<void> _manualRecord(NotificationRecord r, String type) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final ok = await recordNotificationManually(r, type);
+      await _loadDiagnostics();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            ok
+                ? '已记为${type == 'income' ? '收入' : '支出'} ¥${(r.amount ?? 0).toStringAsFixed(2)}'
+                : '已存在相同金额的账单，没有重复记录',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('补记失败：$e')));
+    }
   }
 
   /// 「x 分钟前」这样的相对时间。

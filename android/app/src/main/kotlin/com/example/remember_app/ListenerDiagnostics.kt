@@ -42,6 +42,8 @@ object ListenerDiagnostics {
      * 记下一条通知。
      *
      * @param recognized 是否被识别成支付通知；false 时 [reason] 说明为什么没记。
+     * @param amount 正文里能读到的金额（可能为 null）。
+     * @param recorded 是否已经被用户手动补记过。
      */
     fun recordNotification(
         context: Context,
@@ -49,7 +51,9 @@ object ListenerDiagnostics {
         title: String,
         text: String,
         recognized: Boolean,
-        reason: String
+        reason: String,
+        amount: Double? = null,
+        recorded: Boolean = false
     ) {
         val p = prefs(context) ?: return
         val arr = readNotifs(p)
@@ -61,10 +65,31 @@ object ListenerDiagnostics {
                 put("recognized", recognized)
                 put("reason", reason)
                 put("timestamp", System.currentTimeMillis())
+                put("amount", amount ?: JSONObject.NULL)
+                put("recorded", recorded)
             }
         )
         while (arr.length() > MAX_NOTIFS) arr.remove(0)
         p.edit().putString(KEY_NOTIFS, arr.toString()).apply()
+    }
+
+    /**
+     * 标记某条通知已被用户手动补记。
+     *
+     * 诊断列表里那条通知还在，但按钮会变成「已补记」，避免重复点出两条账单。
+     */
+    fun markRecorded(context: Context, timestamp: Long): Boolean {
+        val p = prefs(context) ?: return false
+        val arr = readNotifs(p)
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optLong("timestamp", 0L) == timestamp) {
+                o.put("recorded", true)
+                p.edit().putString(KEY_NOTIFS, arr.toString()).apply()
+                return true
+            }
+        }
+        return false
     }
 
     /** 取诊断快照，供 MethodChannel 返回给 Dart。 */
@@ -76,6 +101,7 @@ object ListenerDiagnostics {
         // 新的排在前面。
         for (i in arr.length() - 1 downTo 0) {
             val o = arr.optJSONObject(i) ?: continue
+            val amount = if (o.isNull("amount")) null else o.optDouble("amount", 0.0)
             notifs.add(
                 mapOf(
                     "packageName" to o.optString("packageName", ""),
@@ -83,7 +109,9 @@ object ListenerDiagnostics {
                     "text" to o.optString("text", ""),
                     "recognized" to o.optBoolean("recognized", false),
                     "reason" to o.optString("reason", ""),
-                    "timestamp" to o.optLong("timestamp", 0L)
+                    "timestamp" to o.optLong("timestamp", 0L),
+                    "amount" to amount,
+                    "recorded" to o.optBoolean("recorded", false)
                 )
             )
         }

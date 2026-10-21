@@ -90,6 +90,20 @@ object PaymentParser {
     }
 
     /**
+     * 在正文里找一个金额，**不要求有收支方向词**。
+     *
+     * 用于诊断场景：通知只写了「¥31.31」这种没法判断是收还是付的内容，
+     * 但金额本身是明确的。App 里让用户一键补记，方向由用户自己选——
+     * 与其猜错方向往账本里塞一条错误的收支，不如让用户点一下。
+     */
+    fun findAnyAmount(content: String): Double? {
+        val candidates = collectAmounts(content)
+        if (candidates.isEmpty()) return null
+        // 优先带货币符号的，其次「元」后缀，最后裸小数；同级别取出现最早的。
+        return candidates.sortedWith(compareBy({ it.kind }, { it.start })).first().value
+    }
+
+    /**
      * 「疑似支付」关键词。
      *
      * 覆盖各家钱包/银行的常见说法。

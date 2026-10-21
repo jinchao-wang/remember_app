@@ -304,4 +304,27 @@ class PaymentParserTest {
         assertFalse(PaymentParser.looksFinancial("天气 明天晴 25.00 摄氏度"))
         assertFalse(PaymentParser.looksFinancial("版本 8.12 更新"))
     }
+
+    // ------------------------------------------------------------ 只取金额
+    //
+    // 「¥31.31」这种通知判断不出是收还是付，但金额是明确的。
+    // App 里让用户一键补记、方向自己选，比 App 猜一个方向强。
+
+    @Test
+    fun `能取出没有方向词的通知里的金额`() {
+        assertEquals(31.31, PaymentParser.findAnyAmount("微信支付 ¥31.31")!!, 0.0001)
+        assertEquals(54.54, PaymentParser.findAnyAmount("微信支付 ¥54.54")!!, 0.0001)
+        assertEquals(37.77, PaymentParser.findAnyAmount("微信支付 收款 37.77元")!!, 0.0001)
+    }
+
+    @Test
+    fun `取不到金额时返回空`() {
+        assertNull(PaymentParser.findAnyAmount("微信支付 你有一笔支出"))
+        assertNull(PaymentParser.findAnyAmount(""))
+    }
+
+    @Test
+    fun `取金额时优先带货币符号的`() {
+        assertEquals(12.00, PaymentParser.findAnyAmount("¥12.00")!!, 0.0001)
+    }
 }

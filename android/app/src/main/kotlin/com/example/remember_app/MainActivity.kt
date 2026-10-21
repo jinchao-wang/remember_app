@@ -38,6 +38,11 @@ class MainActivity : FlutterActivity() {
                     val enabled = PaymentNotificationListenerService.isNotificationListeningEnabled(this)
                     result.success(ListenerDiagnostics.snapshot(this, enabled))
                 }
+                // 标记某条通知已被用户手动补记，避免重复点出两条账单。
+                "markNotificationRecorded" -> {
+                    val ts = (call.argument<Number>("timestamp"))?.toLong() ?: 0L
+                    result.success(ListenerDiagnostics.markRecorded(this, ts))
+                }
                 "openAppSettings" -> {
                     openAppSettings()
                     result.success(true)
