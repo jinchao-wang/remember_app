@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"/>
+    <!-- 开机后重新排上保活闹钟：重启后系统不一定会重新绑定监听服务。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <application
         android:label="Remember 记账"
@@ -31,5 +33,29 @@
                 <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
         </service>
+
+        <!--
+            保活闹钟：每 15 分钟把进程拉起来请求系统重新绑定监听服务。
+            监听服务被系统解绑后不会自己回来，这是唯一可靠的自动恢复途径。
+        -->
+        <receiver
+            android:name=".KeepAliveReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.remember_app.action.KEEP_ALIVE"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- 开机自启：重启后重新排闹钟并请求一次重绑。 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <!-- 部分厂商的「快速启动」用这个动作代替 BOOT_COMPLETED。 -->
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
