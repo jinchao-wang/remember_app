@@ -161,4 +161,124 @@ void main() {
       expect(r.fullText, '微信支付');
     });
   });
+
+  group('保活与重连状态', () {
+    test('解析保活相关字段', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+        'lastRebindAt': 2000,
+        'rebindCount': 7,
+        'lastRebindOk': true,
+        'keepAliveArmed': true,
+      });
+
+      expect(d.lastRebindAt, isNotNull);
+      expect(d.lastRebindAt!.millisecondsSinceEpoch, 2000);
+      expect(d.rebindCount, 7);
+      expect(d.lastRebindOk, isTrue);
+      expect(d.keepAliveArmed, isTrue);
+    });
+
+    test('缺省值是安全的', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{});
+
+      expect(d.lastRebindAt, isNull);
+      expect(d.rebindCount, 0);
+      expect(d.lastRebindOk, isFalse);
+      expect(d.keepAliveArmed, isFalse);
+    });
+
+    test('重连次数为 0 时不显示成「已重连 0 次」', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{});
+      expect(d.rebindCount > 0, isFalse);
+    });
+  });
+
+  group('绑定是否还活着', () {
+    test('解析最近一次收到任意通知的时间', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+        'lastEventAt': 2000,
+      });
+
+      expect(d.lastEventAt, isNotNull);
+      expect(d.lastEventAt!.millisecondsSinceEpoch, 2000);
+    });
+
+    test('没收到过任何通知 -> 不算活着', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+      });
+
+      expect(d.lastEventAt, isNull);
+      expect(d.listenerLooksAlive, isFalse);
+      expect(d.listenerLooksStuck, isTrue);
+    });
+
+    test('刚收到过通知 -> 算活着', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+        'lastEventAt':
+            DateTime.now().millisecondsSinceEpoch - 60 * 1000,
+      });
+
+      expect(d.listenerLooksAlive, isTrue);
+      expect(d.listenerLooksStuck, isFalse);
+    });
+
+    test('很久没收到任何通知 -> 判定为绑定僵死', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+        'lastEventAt':
+            DateTime.now().millisecondsSinceEpoch - 3 * 60 * 60 * 1000,
+      });
+
+      // 系统那边说「已连接」，但实际早就收不到通知了——这正是用户报的故障。
+      expect(d.serviceLooksConnected, isTrue);
+      expect(d.listenerLooksAlive, isFalse);
+      expect(d.listenerLooksStuck, isTrue);
+    });
+
+    test('系统已经断开时不重复报僵死', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'listenerEnabled': true,
+        'serviceConnectedAt': 1000,
+        'serviceDisconnectedAt': 2000,
+      });
+
+      expect(d.serviceLooksConnected, isFalse);
+      expect(d.listenerLooksStuck, isFalse);
+    });
+  });
+
+  group('重连结果', () {
+    test('解析上次重连的结果', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'lastReconnectAt': 5000,
+        'lastReconnectOk': true,
+        'lastReconnectStage': 'rebind',
+        'lastReconnectMessage': '监听服务还活着，已重新请求连接',
+      });
+
+      expect(d.lastReconnectAt, isNotNull);
+      expect(d.lastReconnectAt!.millisecondsSinceEpoch, 5000);
+      expect(d.lastReconnectOk, isTrue);
+      expect(d.lastReconnectStage, 'rebind');
+      expect(d.lastReconnectMessage, '监听服务还活着，已重新请求连接');
+    });
+
+    test('缺省值是安全的', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{});
+
+      expect(d.lastReconnectAt, isNull);
+      expect(d.lastReconnectOk, isFalse);
+      expect(d.lastReconnectStage, '');
+      expect(d.lastReconnectMessage, '');
+    });
+  });
 }

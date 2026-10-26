@@ -18,6 +18,11 @@ class PaymentNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        // 任何一条通知都证明服务还活着，先记一笔存活时间。
+        // 这一条是「绑定到底掉没掉」最直接的判据：
+        // 收到过 = 绑定是活的（问题多半在文案识别），没收到过 = 绑定真的僵死了。
+        ListenerDiagnostics.recordEvent(applicationContext)
+
         if (sbn.packageName == packageName) return
 
         val content = extractContent(sbn.notification.extras)
@@ -113,6 +118,9 @@ class PaymentNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         ListenerDiagnostics.recordConnected(applicationContext)
+        // 连上了就（重新）排上保活闹钟。
+        // 进程被杀、用户强制停止、系统重启之后，闹钟才是我们能回来的唯一途径。
+        ListenerKeepAlive.schedule(applicationContext)
         Log.i(TAG, "通知监听已连接")
     }
 
@@ -120,6 +128,16 @@ class PaymentNotificationListenerService : NotificationListenerService() {
         ListenerDiagnostics.recordDisconnected(applicationContext)
         super.onListenerDisconnected()
         Log.w(TAG, "通知监听已断开")
+        // 断开了立刻请求重新绑定——这是最省事、最有效的一步。
+        // 系统在部分设备上解绑之后不会自己绑回来，不主动请求就再也回不去了。
+        ListenerKeepAlive.rebind(applicationContext)
+    }
+
+    override fun onDestroy() {
+        // 服务被销毁说明进程要没了（或系统要收它），留个痕迹。
+        ListenerDiagnostics.recordDisconnected(applicationContext)
+        Log.w(TAG, "通知监听服务被销毁")
+        super.onDestroy()
     }
 
     companion object {

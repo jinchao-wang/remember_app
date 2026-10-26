@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import 'notification_listener.dart';
@@ -99,22 +101,88 @@ class ListenerDiagnostics {
   /// 监听服务最后一次与系统断开的时间。
   final DateTime? serviceDisconnectedAt;
 
-  /// 最后一次收到任何通知的时间。
+  /// 最后一次收到**疑似支付类**通知的时间。
+  ///
+  /// 注意这是「支付类」的，不是「任何」通知——用户几天不付款时它会一直是旧的。
+  /// 判断服务死活请看 [lastEventAt]。
   final DateTime? lastNotificationAt;
+
+  /// 最后一次收到**任何**通知的时间（聊天消息也算）。
+  ///
+  /// 这是判断监听服务还活不活着的关键：
+  /// - 这个时间在往前走 -> 服务是活的，收不到支付通知是**文案识别**的问题；
+  /// - 这个时间停住了 -> 绑定真的掉了，点「重新连接监听服务」能救回来。
+  final DateTime? lastEventAt;
 
   /// 最近收到的疑似支付类通知，最新的在前。
   final List<NotificationRecord> recentNotifications;
+
+  /// 最后一次请求系统重新绑定监听服务的时间。
+  final DateTime? lastRebindAt;
+
+  /// 一共请求过多少次重新绑定。
+  final int rebindCount;
+
+  /// 最近一次重新绑定请求是否成功发出。
+  final bool lastRebindOk;
+
+  /// 保活闹钟是否已经排上。
+  final bool keepAliveArmed;
+
+  /// 最后一次「手动重连监听服务」的时间。
+  final DateTime? lastReconnectAt;
+
+  /// 最后一次重连是否成功。
+  final bool lastReconnectOk;
+
+  /// 最后一次重连走到哪一步：rebind / force / notAuthorized。
+  final String lastReconnectStage;
+
+  /// 最后一次重连的结果说明（原生层给用户的文案）。
+  final String lastReconnectMessage;
 
   const ListenerDiagnostics({
     required this.listenerEnabled,
     this.serviceConnectedAt,
     this.serviceDisconnectedAt,
     this.lastNotificationAt,
+    this.lastEventAt,
     this.recentNotifications = const [],
+    this.lastRebindAt,
+    this.rebindCount = 0,
+    this.lastRebindOk = false,
+    this.keepAliveArmed = false,
+    this.lastReconnectAt,
+    this.lastReconnectOk = false,
+    this.lastReconnectStage = '',
+    this.lastReconnectMessage = '',
   });
 
   /// 监听服务是否曾经被系统绑定过。
   bool get serviceEverConnected => serviceConnectedAt != null;
+
+  /// 「最近还收到过任意通知」的时间窗口：30 分钟。
+  ///
+  /// 与原生层 `ListenerHealth.ALIVE_WINDOW_MS` 保持一致。
+  static const int aliveWindowMinutes = 30;
+
+  /// 监听服务最近看起来还活着吗。
+  ///
+  /// 判据是 [lastEventAt]：最近半小时内收到过任何一条通知就算活着。
+  ///
+  /// 这一条专门用来识别用户报的那个故障：
+  /// 系统那边显示「已连接」，但实际上一个通知都收不到——
+  /// 这时 [serviceLooksConnected] 会是 true（骗人），只有这个能看出问题。
+  bool get listenerLooksAlive {
+    final at = lastEventAt;
+    if (at == null) return false;
+    final diff = DateTime.now().difference(at).inMinutes;
+    return diff >= 0 && diff < aliveWindowMinutes;
+  }
+
+  /// 出现了「系统说连着、实际却收不到」这种僵死状态。
+  bool get listenerLooksStuck =>
+      serviceLooksConnected && serviceEverConnected && !listenerLooksAlive;
 
   /// 按记录判断，监听服务最后一次已知的状态是不是「已连接」。
   ///
@@ -148,7 +216,16 @@ class ListenerDiagnostics {
       serviceConnectedAt: ts(map['serviceConnectedAt']),
       serviceDisconnectedAt: ts(map['serviceDisconnectedAt']),
       lastNotificationAt: ts(map['lastNotificationAt']),
+      lastEventAt: ts(map['lastEventAt']),
       recentNotifications: list,
+      lastRebindAt: ts(map['lastRebindAt']),
+      rebindCount: (map['rebindCount'] as num?)?.toInt() ?? 0,
+      lastRebindOk: (map['lastRebindOk'] as bool?) ?? false,
+      keepAliveArmed: (map['keepAliveArmed'] as bool?) ?? false,
+      lastReconnectAt: ts(map['lastReconnectAt']),
+      lastReconnectOk: (map['lastReconnectOk'] as bool?) ?? false,
+      lastReconnectStage: (map['lastReconnectStage'] as String?) ?? '',
+      lastReconnectMessage: (map['lastReconnectMessage'] as String?) ?? '',
     );
   }
 }
@@ -198,6 +275,47 @@ class ListenerDiagnosticsService {
     }
   }
 
+  /// 手动重连监听服务。
+  ///
+  /// 原生侧会先用无副作用的 `requestRebind` 请求重绑并等几秒看效果，
+  /// 确认没连上才去重置组件绑定（这一步有副作用，不该自动做）。
+  ///
+  /// 加了超时兜底：万一原生层卡住，界面不能一直停在「正在重新连接…」，
+  /// 那比没重连还让人困惑。
+  static Future<ReconnectResult> reconnect() async {
+    try {
+      final raw = await _channel
+          .invokeMethod<Map<dynamic, dynamic>>(
+            'reconnectListener',
+          )
+          .timeout(const Duration(seconds: 20));
+      if (raw == null) {
+        return const ReconnectResult(
+          ok: false,
+          stage: 'unknown',
+          message: '重连失败：原生层没有响应',
+        );
+      }
+      return ReconnectResult(
+        ok: (raw['ok'] as bool?) ?? false,
+        stage: (raw['stage'] as String?) ?? 'unknown',
+        message: (raw['message'] as String?) ?? '',
+      );
+    } on TimeoutException {
+      return const ReconnectResult(
+        ok: false,
+        stage: 'timeout',
+        message: '重连超时（20 秒没结果），请再点一次',
+      );
+    } catch (_) {
+      return const ReconnectResult(
+        ok: false,
+        stage: 'unknown',
+        message: '重连失败：无法调用原生层',
+      );
+    }
+  }
+
   static Future<void> _invoke(String method) async {
     try {
       await _channel.invokeMethod<void>(method);
@@ -205,6 +323,24 @@ class ListenerDiagnosticsService {
       // iOS / 桌面端没有这些页面，静默忽略。
     }
   }
+}
+
+/// 「重新连接监听服务」的结果。
+class ReconnectResult {
+  /// 是否成功。
+  final bool ok;
+
+  /// 生效的阶段：rebind（只重绑）/ force（重置了组件）/ notAuthorized（没授权）。
+  final String stage;
+
+  /// 给用户看的说明。
+  final String message;
+
+  const ReconnectResult({
+    required this.ok,
+    required this.stage,
+    required this.message,
+  });
 }
 
 /// 手动把一条没被自动记账的通知补记成账单。

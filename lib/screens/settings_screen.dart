@@ -26,6 +26,13 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   bool _listening = false;
   bool _checking = true;
   ListenerDiagnostics? _diagnostics;
+
+  /// 「重新连接监听服务」是否正在进行。
+  ///
+  /// 重连要跑几秒（原生层最多等 6 秒），期间禁掉按钮，
+  /// 既避免连点，也让用户看到「正在重新连接…」。
+  bool _reconnecting = false;
+
   static const _platform = MethodChannel('remember/payment_listener');
 
   @override
@@ -324,6 +331,8 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             ] else if (diag != null) ...[
               const SizedBox(height: 12),
               _buildServiceState(diag),
+              const SizedBox(height: 10),
+              _buildReconnectRow(),
               if (!diag.serviceLooksConnected) ...[
                 const SizedBox(height: 12),
                 _buildRomHints(),
@@ -372,10 +381,136 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
           _diagRow(
             Icons.notifications_active,
             '最近收到通知',
+            _timeAgo(diag.lastEventAt),
+            diag.lastEventAt == null ? '一条都没收到过' : '任意通知（含聊天消息）',
+          ),
+          const SizedBox(height: 6),
+          _diagRow(
+            Icons.receipt_long,
+            '最近支付类通知',
             _timeAgo(diag.lastNotificationAt),
             '',
           ),
+          const SizedBox(height: 6),
+          _diagRow(
+            Icons.autorenew,
+            '自动保活',
+            diag.keepAliveArmed ? '已开启' : '未开启',
+            diag.rebindCount > 0
+                ? '已重连 ${diag.rebindCount} 次 · 上次 ${_timeAgo(diag.lastRebindAt)}'
+                : '每 15 分钟自动重连一次',
+          ),
+          if (diag.listenerLooksStuck) ...[
+            const SizedBox(height: 8),
+            _stuckWarning(),
+          ],
         ],
+      ),
+    );
+  }
+
+  /// 「系统说连着、实际收不到」的僵死告警。
+  ///
+  /// 这是用户报的那个故障最典型的形态：
+  /// 设置里勾着、系统也说「已连接」，但通知一个都收不到。
+  /// 光看「已连接」是发现不了的，得看「多久没收到任何通知了」。
+  Widget _stuckWarning() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: Colors.orange.shade800),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '系统显示「已连接」，但已经很久没收到任何通知了——'
+              '多半是监听绑定被系统解绑后没绑回来。点下面的按钮重连一下。',
+              style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 「重新连接监听服务」按钮。
+  ///
+  /// 一直显示，不只是「未连接」时才显示——
+  /// 最麻烦的故障是**绑定僵死**：系统以为还连着、界面也显示「已连接」，
+  /// 但通知其实一个都收不到（这正是用户报的现象）。
+  /// 这种情况下只有手动重置绑定才能救回来。
+  Widget _buildReconnectRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '如果付了钱却一直没记账，先点这个重连一次监听服务。'
+          'Android 偶尔会在后台把监听服务解绑之后不再绑回来，'
+          '表现就是「刚装上好用，过一段时间就收不到了」。',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            // 重连要跑几秒，期间禁掉按钮，免得用户连点。
+            onPressed: _reconnecting ? null : _reconnectListener,
+            icon: _reconnecting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.link, size: 18),
+            label: Text(_reconnecting ? '正在重新连接…' : '重新连接监听服务'),
+          ),
+        ),
+        if (_lastReconnectHint != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            _lastReconnectHint!,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 上一次重连的结果。
+  ///
+  /// 从诊断数据里取，所以重启 App 之后也还在——
+  /// 用户过几天回来看，能知道上次那次重连到底成功了没有。
+  String? get _lastReconnectHint {
+    final d = _diagnostics;
+    if (d == null || d.lastReconnectMessage.isEmpty) return null;
+    return '上次重连（${_timeAgo(d.lastReconnectAt)}）：${d.lastReconnectMessage}';
+  }
+
+  /// 手动重连监听服务。
+  ///
+  /// 「正在重连」直接体现在按钮上，不弹提示框——
+  /// 提示框会排队，用户要等第一个提示框消失才看得到结果。
+  Future<void> _reconnectListener() async {
+    if (_reconnecting) return;
+    setState(() => _reconnecting = true);
+    final result = await ListenerDiagnosticsService.reconnect();
+    await _loadDiagnostics();
+    if (!mounted) return;
+    setState(() => _reconnecting = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result.message),
+        backgroundColor: result.ok ? Colors.green.shade700 : Colors.orange.shade800,
       ),
     );
   }

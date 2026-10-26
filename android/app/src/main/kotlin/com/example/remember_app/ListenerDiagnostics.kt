@@ -19,6 +19,23 @@ object ListenerDiagnostics {
     private const val KEY_CONNECTED_AT = "connectedAt"
     private const val KEY_DISCONNECTED_AT = "disconnectedAt"
     private const val KEY_NOTIFS = "notifs"
+    private const val KEY_LAST_REBIND_AT = "lastRebindAt"
+    private const val KEY_REBIND_COUNT = "rebindCount"
+    private const val KEY_LAST_REBIND_OK = "lastRebindOk"
+    private const val KEY_KEEP_ALIVE_ARMED = "keepAliveArmed"
+    private const val KEY_LAST_EVENT_AT = "lastEventAt"
+    private const val KEY_RECONNECT_AT = "lastReconnectAt"
+    private const val KEY_RECONNECT_OK = "lastReconnectOk"
+    private const val KEY_RECONNECT_STAGE = "lastReconnectStage"
+    private const val KEY_RECONNECT_MESSAGE = "lastReconnectMessage"
+
+    /**
+     * 「收到过通知」这个存活信号的写入间隔：1 分钟。
+     *
+     * 聊天消息可能一分钟好几条，每条都写盘没必要这么勤；
+     * 而「最近还活着」的判断窗口是几十分钟，1 分钟的精度完全够用。
+     */
+    private const val EVENT_WRITE_INTERVAL_MS = 60_000L
 
     /**
      * 保留多少条历史通知。
@@ -36,6 +53,63 @@ object ListenerDiagnostics {
     /** 监听服务与系统断开时调用。 */
     fun recordDisconnected(context: Context) {
         prefs(context)?.edit()?.putLong(KEY_DISCONNECTED_AT, System.currentTimeMillis())?.apply()
+    }
+
+    /**
+     * 记录「刚刚收到了一条通知」。
+     *
+     * 这是判断监听服务死活最可靠的信号。
+     *
+     * [recordNotification] 那套只留「疑似支付类」的通知，
+     * 用户几天不付款时它就一直停在旧时间上，
+     * 分不清「没收到支付通知」和「服务已经死了」这两种完全不同的情况。
+     * 这里记的是**任何**通知（聊天消息也算）——
+     * 只要还在收，就说明监听服务是活的，问题多半出在文案识别上；
+     * 连这条时间都停了，才是绑定真的掉了。
+     */
+    fun recordEvent(context: Context) {
+        val p = prefs(context) ?: return
+        val now = System.currentTimeMillis()
+        val last = p.getLong(KEY_LAST_EVENT_AT, 0L)
+        if (now - last < EVENT_WRITE_INTERVAL_MS) return
+        p.edit().putLong(KEY_LAST_EVENT_AT, now).apply()
+    }
+
+    /**
+     * 记录一次「请求重新绑定监听服务」。
+     *
+     * 用户报「一开始有效、后来就收不到了」时，
+     * 这条记录能回答：App 有没有在尝试自救、试了几次、有没有成功。
+     */
+    fun recordRebind(context: Context, ok: Boolean) {
+        val p = prefs(context) ?: return
+        val count = p.getInt(KEY_REBIND_COUNT, 0) + 1
+        p.edit()
+            .putLong(KEY_LAST_REBIND_AT, System.currentTimeMillis())
+            .putInt(KEY_REBIND_COUNT, count)
+            .putBoolean(KEY_LAST_REBIND_OK, ok)
+            .apply()
+    }
+
+    /** 记录保活闹钟是否已经排上。 */
+    fun recordKeepAlive(context: Context, armed: Boolean) {
+        prefs(context)?.edit()?.putBoolean(KEY_KEEP_ALIVE_ARMED, armed)?.apply()
+    }
+
+    /**
+     * 记录一次「手动重连监听服务」的结果。
+     *
+     * 把结果留在本机而不是只弹一下提示框：
+     * 用户下次打开 App 时还能看到「上次重连是什么时候、结果是什么」，
+     * 不用凭记忆猜。
+     */
+    fun recordReconnect(context: Context, ok: Boolean, stage: String, message: String) {
+        prefs(context)?.edit()
+            ?.putLong(KEY_RECONNECT_AT, System.currentTimeMillis())
+            ?.putBoolean(KEY_RECONNECT_OK, ok)
+            ?.putString(KEY_RECONNECT_STAGE, stage)
+            ?.putString(KEY_RECONNECT_MESSAGE, message)
+            ?.apply()
     }
 
     /**
@@ -123,6 +197,15 @@ object ListenerDiagnostics {
             "serviceConnectedAt" to (p?.getLong(KEY_CONNECTED_AT, 0L) ?: 0L),
             "serviceDisconnectedAt" to (p?.getLong(KEY_DISCONNECTED_AT, 0L) ?: 0L),
             "lastNotificationAt" to lastAt,
+            "lastRebindAt" to (p?.getLong(KEY_LAST_REBIND_AT, 0L) ?: 0L),
+            "rebindCount" to (p?.getInt(KEY_REBIND_COUNT, 0) ?: 0),
+            "lastRebindOk" to (p?.getBoolean(KEY_LAST_REBIND_OK, false) ?: false),
+            "keepAliveArmed" to (p?.getBoolean(KEY_KEEP_ALIVE_ARMED, false) ?: false),
+            "lastEventAt" to (p?.getLong(KEY_LAST_EVENT_AT, 0L) ?: 0L),
+            "lastReconnectAt" to (p?.getLong(KEY_RECONNECT_AT, 0L) ?: 0L),
+            "lastReconnectOk" to (p?.getBoolean(KEY_RECONNECT_OK, false) ?: false),
+            "lastReconnectStage" to (p?.getString(KEY_RECONNECT_STAGE, "") ?: ""),
+            "lastReconnectMessage" to (p?.getString(KEY_RECONNECT_MESSAGE, "") ?: ""),
             "recentNotifications" to notifs
         )
     }
