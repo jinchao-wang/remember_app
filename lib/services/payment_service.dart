@@ -1,5 +1,6 @@
 import '../models/transaction.dart';
 import '../utils/category_guesser.dart';
+import '../utils/source_role.dart';
 import 'app_state.dart';
 import 'database.dart';
 import 'notification_listener.dart';
@@ -9,8 +10,50 @@ class PaymentService {
   static final PaymentService instance = PaymentService._();
   PaymentService._();
 
-  /// 判重时间窗。同一笔通知可能被系统重复推送，短时间内只记一条。
+  /// 同来源判重时间窗。同一笔通知可能被系统重复推送，短时间内只记一条。
   static const Duration dedupeWindow = Duration(minutes: 10);
+
+  /// 跨来源判重时间窗（支付平台通知 ↔ 银行通知）。
+  ///
+  /// 比同来源窗口短，因为跨来源合并的风险更高：
+  /// 万一用户真的在两分钟里用两个渠道付了同价的两笔钱，
+  /// 窗口越宽越容易把两笔真交易并成一笔。
+  ///
+  /// 5 分钟是权衡：银行短信通常在扣款后几秒内到达，
+  /// 银行 App 的推送通知一般也在一两分钟内。
+  static const Duration crossSourceWindow = Duration(minutes: 5);
+
+  /// 金额比较容差。分与厘的进位差异不该被当成两笔。
+  static const double amountTolerance = 0.005;
+
+  /// 是否开启「支付平台 + 银行通知」跨来源自动去重。
+  ///
+  /// 默认开启（用户明确反馈过重复账单）。
+  /// 用户如果觉得误合并了，可以在设置里关掉。
+  ///
+  /// 这是内存副本，真正的值存在数据库里（见 [crossSourceSettingKey]），
+  /// 启动时由 [loadSettings] 读进来。
+  static bool crossSourceEnabled = true;
+
+  /// 「跨来源自动去重」开关在数据库里的键。
+  static const String crossSourceSettingKey = 'cross_source_dedupe';
+
+  /// 从数据库把设置读进内存。
+  ///
+  /// 必须持久化：这个开关之前只存在静态变量里，
+  /// 重启 App 就恢复默认值了——用户在设置里明明关掉了，重新打开又开着。
+  static Future<void> loadSettings() async {
+    crossSourceEnabled = await DatabaseHelper.instance.getBoolSetting(
+      crossSourceSettingKey,
+      defaultValue: true,
+    );
+  }
+
+  /// 改开关并写回数据库。
+  static Future<void> setCrossSourceEnabled(bool value) async {
+    crossSourceEnabled = value;
+    await DatabaseHelper.instance.setBoolSetting(crossSourceSettingKey, value);
+  }
 
   /// 判断一条已存在的自动账单是否就是本次通知的同一笔。
   ///
@@ -22,12 +65,84 @@ class PaymentService {
     required double eventAmount,
     required DateTime eventTime,
   }) {
-    if ((existing.amount - eventAmount).abs() >= 0.005) return false;
+    if ((existing.amount - eventAmount).abs() >= amountTolerance) return false;
     return existing.date.difference(eventTime).abs() <= dedupeWindow;
   }
 
+  /// 判断两条记录是不是同一笔钱（跨来源场景）。
+  ///
+  /// 只在「一条来自支付平台、另一条来自银行」时才算，
+  /// 其它组合一律返回 false——宁可漏合并，也不把两笔真交易并掉。
+  static bool isSameCrossSourceEvent({
+    required Transaction existing,
+    required double eventAmount,
+    required DateTime eventTime,
+    required String eventType,
+    required SourceRole existingRole,
+    required SourceRole eventRole,
+  }) {
+    if (!isCrossSourcePair(existingRole, eventRole)) return false;
+    if ((existing.amount - eventAmount).abs() >= amountTolerance) return false;
+    // 方向必须一致：同一笔不可能既是支出又是收入。
+    if (existing.type != eventType) return false;
+    return existing.date.difference(eventTime).abs() <= crossSourceWindow;
+  }
+
+  /// 判断一条新通知是不是已经记过了。
+  ///
+  /// 抽成纯函数是为了能完整单测：
+  /// 真正跑一遍 `handleEvent` 需要数据库，
+  /// 而「同来源 / 跨来源 / 角色配对 / 时间窗」这四件事的组合很多，
+  /// 光靠数据库集成测试覆盖不全。
+  ///
+  /// @param candidates 时间窗内、方向相同的自动账单候选。
+  /// @param event 新到的通知。
+  /// @param eventTime 通知的实际发生时间。
+  /// @return 命中的那条重复记录；null 表示这是一笔新交易。
+  static Transaction? findDuplicate({
+    required List<Transaction> candidates,
+    required PaymentEvent event,
+    required DateTime eventTime,
+  }) {
+    final eventRole = roleOf(packageName: event.sourceApp, content: event.content);
+    for (final existing in candidates) {
+      // 同来源：系统把同一条通知重复推送了。
+      if (existing.sourceApp == event.sourceApp) {
+        if (isSamePaymentEvent(
+          existing: existing,
+          eventAmount: event.amount,
+          eventTime: eventTime,
+        )) {
+          return existing;
+        }
+        continue;
+      }
+
+      // 跨来源：只有平台 ↔ 银行这种配对才可能是同一笔。
+      if (!crossSourceEnabled) continue;
+      final existingRole = roleOf(
+        packageName: existing.sourceApp,
+        content: existing.note ?? '',
+      );
+      if (isSameCrossSourceEvent(
+        existing: existing,
+        eventAmount: event.amount,
+        eventTime: eventTime,
+        eventType: event.type,
+        existingRole: existingRole,
+        eventRole: eventRole,
+      )) {
+        return existing;
+      }
+    }
+    return null;
+  }
+
   /// 规则：
-  /// - [dedupeWindow] 内已存在同来源 + 同金额 + **同收支方向**的自动账单 -> 跳过
+  /// - **同来源**：[dedupeWindow] 内已存在同来源 + 同金额 + **同收支方向**的自动账单
+  ///   -> 跳过（系统重复推送同一笔）
+  /// - **跨来源**：支付平台通知与银行通知说的是同一笔钱，
+  ///   [crossSourceWindow] 内已存在同金额 + 同方向的自动账单 -> 跳过
   /// - 用户手动编辑过的记录保持原样，不会被后续通知覆盖
   /// - 其余情况新增一条自动账单
   ///
@@ -37,23 +152,29 @@ class PaymentService {
     // 用事件自身的发生时间，而不是「现在」：
     // 原生层会缓存 App 未运行期间的通知，补记时必须还原原始日期。
     final eventTime = event.timestamp ?? DateTime.now();
+    // 预筛用较大的窗口（下界更早），跨来源的候选才不会被漏掉。
     final window = eventTime.subtract(dedupeWindow).toIso8601String();
 
-    // SQL 只用下界做索引预筛，真正的双边判断交给 isSamePaymentEvent。
+    // SQL 只用下界做索引预筛，真正的双边判断交给 findDuplicate。
+    //
+    // 注意这里**不能**加 `sourceApp = ?`：
+    // 旧实现加了它，结果微信通知和银行通知永远互相看不见，
+    // 同一笔扣费被记成两笔——这正是用户反馈的重复账单。
     final rows = await db.query(
       'transactions',
-      where: 'isAuto = 1 AND sourceApp = ? AND type = ? AND date >= ?',
-      whereArgs: [event.sourceApp, event.type, window],
+      where: 'isAuto = 1 AND type = ? AND date >= ?',
+      whereArgs: [event.type, window],
     );
-    for (final row in rows) {
-      final existing = Transaction.fromMap(row);
-      if (isSamePaymentEvent(
-        existing: existing,
-        eventAmount: event.amount,
-        eventTime: eventTime,
-      )) {
-        return false;
-      }
+    final candidates =
+        rows.map((row) => Transaction.fromMap(row as Map<String, dynamic>)).toList();
+
+    if (findDuplicate(
+      candidates: candidates,
+      event: event,
+      eventTime: eventTime,
+    ) !=
+        null) {
+      return false;
     }
 
     final tx = Transaction(
@@ -74,5 +195,62 @@ class PaymentService {
   String _guessCategory(PaymentEvent event) {
     // 与账单导入共用同一套规则表（lib/utils/category_guesser.dart）。
     return guessCategory(event.content);
+  }
+
+  /// 扫描库里已经存在的账单，找出跨来源的重复（支付平台 + 银行各记了一笔）。
+  ///
+  /// 用户反馈「总是有重复账单」时，已经记进去的那些也得能清理。
+  ///
+  /// 判定沿用入库时的规则，保守优先：
+  /// - 两条都是自动记录（手动记的绝不动）
+  /// - 用户编辑过的记录不参与合并（用户可能已经手动整理过）
+  /// - 金额相同、方向相同、时间差在 [crossSourceWindow] 内
+  /// - 来源角色是平台 ↔ 银行
+  ///
+  /// @return 可以删除的重复记录 id 列表（每组重复只保留最早的一条）。
+  static Future<List<int>> findCrossSourceDuplicates() async {
+    final db = await DatabaseHelper.instance.database;
+    final rows = await db.query(
+      'transactions',
+      where: 'isAuto = 1 AND isEdited = 0',
+      orderBy: 'date ASC',
+    );
+    final list = rows.map((r) => Transaction.fromMap(r as Map<String, dynamic>)).toList();
+
+    final removable = <int>[];
+    final kept = <Transaction>[];
+    for (final t in list) {
+      final role = roleOf(packageName: t.sourceApp, content: t.note ?? '');
+      final dup = kept.any((k) {
+        final kRole = roleOf(packageName: k.sourceApp, content: k.note ?? '');
+        return isSameCrossSourceEvent(
+          existing: k,
+          eventAmount: t.amount,
+          eventTime: t.date,
+          eventType: t.type,
+          existingRole: kRole,
+          eventRole: role,
+        );
+      });
+      if (dup) {
+        if (t.id != null) removable.add(t.id!);
+      } else {
+        kept.add(t);
+      }
+    }
+    return removable;
+  }
+
+  /// 清理跨来源重复账单。
+  ///
+  /// @return 删掉的条数。
+  static Future<int> cleanupCrossSourceDuplicates() async {
+    final ids = await findCrossSourceDuplicates();
+    if (ids.isEmpty) return 0;
+    final db = await DatabaseHelper.instance.database;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.delete('transactions', where: 'id IN ($placeholders)', whereArgs: ids);
+    AppState.instance.bump();
+    return ids.length;
   }
 }

@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:remember_app/screens/transaction_list_screen.dart';
 import 'package:remember_app/screens/stats_screen.dart';
@@ -13,11 +12,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _index = 0;
-  late AnimationController _fabAnimationController;
-  late Animation<double> _fabRotation;
 
   /// 通知监听的诊断信息。用于在首页提示「自动记账没在工作」。
   ListenerDiagnostics? _diagnostics;
@@ -29,13 +25,6 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _fabAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _fabRotation = Tween<double>(begin: 0.0, end: 0.25 * math.pi).animate(
-      CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut),
-    );
     WidgetsBinding.instance.addObserver(this);
     _refreshDiagnostics();
   }
@@ -43,7 +32,6 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _fabAnimationController.dispose();
     super.dispose();
   }
 
@@ -106,7 +94,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _showAddScreen() async {
-    _fabAnimationController.forward();
     await Navigator.push(
       context,
       PageRouteBuilder(
@@ -122,9 +109,6 @@ class _HomeScreenState extends State<HomeScreen>
         },
       ),
     );
-    // await 期间 HomeScreen 可能已被销毁，此时操作 AnimationController 会抛异常。
-    if (!mounted) return;
-    _fabAnimationController.reset();
   }
 
   Future<void> _showDatePicker() async {
@@ -158,7 +142,6 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() {
       _index = index;
     });
-    _fabAnimationController.reset();
     // 切到设置页时重新拉一次诊断。
     //
     // 设置页在 IndexedStack 里一直活着，它显示的是「上次打开时的快照」。
@@ -199,42 +182,37 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        onTap: _onTabSelected,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.list_alt_outlined),
-            activeIcon: Icon(Icons.list_alt),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: _onTabSelected,
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            selectedIcon: Icon(Icons.receipt_long),
             label: '账单',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart_outlined),
-            activeIcon: Icon(Icons.bar_chart),
+          NavigationDestination(
+            icon: Icon(Icons.pie_chart_outline),
+            selectedIcon: Icon(Icons.pie_chart),
             label: '统计',
           ),
-          BottomNavigationBarItem(
+          NavigationDestination(
             icon: Icon(Icons.settings_outlined),
-            activeIcon: Icon(Icons.settings),
+            selectedIcon: Icon(Icons.settings),
             label: '设置',
           ),
         ],
       ),
-      floatingActionButton: AnimatedBuilder(
-        animation: _fabAnimationController,
-        builder: (context, child) {
-          return Transform.rotate(
-            angle: _fabRotation.value,
-            child: child,
-          );
-        },
-        child: FloatingActionButton(
-          onPressed: _showAddScreen,
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          child: const Icon(Icons.add, color: Colors.white),
-        ),
-      ),
+      // 「记一笔」只在账单页出现。
+      // 统计页和设置页用不到它，悬浮在右下角反而挡住图表和内容。
+      floatingActionButton: _index == 0
+          ? FloatingActionButton(
+              onPressed: _showAddScreen,
+              tooltip: '记一笔',
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null,
     );
   }
 

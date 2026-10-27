@@ -15,6 +15,9 @@ StreamSubscription<PaymentEvent>? paymentSubscription;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN', null);
+  // 先把设置读进来：监听服务随时可能推来第一条通知，
+  // 那时候开关必须已经是用户选定的值。
+  await PaymentService.loadSettings();
   _startPaymentListener();
   runApp(const RememberApp());
 }

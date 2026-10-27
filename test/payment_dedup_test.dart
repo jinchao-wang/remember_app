@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remember_app/models/transaction.dart';
+import 'package:remember_app/services/notification_listener.dart';
 import 'package:remember_app/services/payment_service.dart';
+import 'package:remember_app/utils/source_role.dart';
 
 Transaction _auto({
   double amount = 12.5,
@@ -91,6 +93,343 @@ void main() {
   group('dedupeWindow', () {
     test('固定为 10 分钟', () {
       expect(PaymentService.dedupeWindow, const Duration(minutes: 10));
+    });
+  });
+
+  group('跨来源判重（微信通知 + 银行通知）', () {
+    Transaction autoFrom({
+      required String packageName,
+      required String content,
+      double amount = 31.31,
+      String type = 'expense',
+      DateTime? date,
+    }) =>
+        Transaction(
+          amount: amount,
+          type: type,
+          category: '转账',
+          date: date ?? base,
+          isAuto: true,
+          sourceApp: packageName,
+          note: content,
+        );
+
+    bool cross(Transaction existing, {
+      required double amount,
+      required DateTime at,
+      required String eventType,
+      required SourceRole existingRole,
+      required SourceRole eventRole,
+    }) =>
+        PaymentService.isSameCrossSourceEvent(
+          existing: existing,
+          eventAmount: amount,
+          eventTime: at,
+          eventType: eventType,
+          existingRole: existingRole,
+          eventRole: eventRole,
+        );
+
+    test('微信通知 + 银行短信，同额同向且相隔 40 秒 -> 判为重复', () {
+      // 用户报的真实场景：微信绑了卡，扣费时两个 App 都发了通知。
+      final wechat = autoFrom(
+        packageName: 'com.tencent.mm',
+        content: '微信支付 付款成功 ¥31.31',
+      );
+      final bank = autoFrom(
+        packageName: 'com.android.mms',
+        content: '【招商银行】您尾号8888的储蓄卡于10月20日消费支出人民币31.31元',
+      );
+
+      expect(
+        cross(
+          wechat,
+          amount: 31.31,
+          at: base.add(const Duration(seconds: 40)),
+          eventType: 'expense',
+          existingRole: roleOf(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 付款成功 ¥31.31',
+          ),
+          eventRole: roleOf(
+            packageName: 'com.android.mms',
+            content: bank.note!,
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('超过跨来源窗口（6 分钟）-> 不判重', () {
+      final wechat = autoFrom(packageName: 'com.tencent.mm', content: '微信支付 付款成功 ¥31.31');
+      expect(
+        cross(
+          wechat,
+          amount: 31.31,
+          at: base.add(const Duration(minutes: 6)),
+          eventType: 'expense',
+          existingRole: SourceRole.platform,
+          eventRole: SourceRole.bank,
+        ),
+        isFalse,
+      );
+    });
+
+    test('方向不一致（支出 vs 收入）-> 不判重', () {
+      final wechat = autoFrom(packageName: 'com.tencent.mm', content: '微信支付 付款成功 ¥31.31');
+      expect(
+        cross(
+          wechat,
+          amount: 31.31,
+          at: base,
+          eventType: 'income',
+          existingRole: SourceRole.platform,
+          eventRole: SourceRole.bank,
+        ),
+        isFalse,
+      );
+    });
+
+    test('金额不同 -> 不判重', () {
+      final wechat = autoFrom(packageName: 'com.tencent.mm', content: '微信支付 付款成功 ¥31.31');
+      expect(
+        cross(
+          wechat,
+          amount: 99.99,
+          at: base,
+          eventType: 'expense',
+          existingRole: SourceRole.platform,
+          eventRole: SourceRole.bank,
+        ),
+        isFalse,
+      );
+    });
+
+    test('两个陌生 App 之间 -> 不判重', () {
+      final other = autoFrom(packageName: 'com.unknown.app', content: '扣款 31.31');
+      expect(
+        cross(
+          other,
+          amount: 31.31,
+          at: base,
+          eventType: 'expense',
+          existingRole: SourceRole.other,
+          eventRole: SourceRole.bank,
+        ),
+        isFalse,
+      );
+    });
+
+    test('平台 ↔ 平台 -> 不判重（不是银行配对）', () {
+      final wechat = autoFrom(packageName: 'com.tencent.mm', content: '微信支付 付款成功 ¥31.31');
+      expect(
+        cross(
+          wechat,
+          amount: 31.31,
+          at: base,
+          eventType: 'expense',
+          existingRole: SourceRole.platform,
+          eventRole: SourceRole.platform,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('来源角色识别', () {
+    test('微信、支付宝 -> platform', () {
+      expect(roleOf(packageName: 'com.tencent.mm', content: ''), SourceRole.platform);
+      expect(
+        roleOf(packageName: 'com.eg.android.AlipayGphone', content: ''),
+        SourceRole.platform,
+      );
+    });
+    test('银行 App -> bank', () {
+      expect(roleOf(packageName: 'com.icbc', content: ''), SourceRole.bank);
+      expect(roleOf(packageName: 'com.cmbchina', content: ''), SourceRole.bank);
+    });
+
+    test('短信 App + 银行特征 -> bank', () {
+      expect(
+        roleOf(
+          packageName: 'com.android.mms',
+          content: '您尾号8888的储蓄卡于10月20日消费支出人民币31.31元',
+        ),
+        SourceRole.bank,
+      );
+    });
+
+    test('短信 App + 非银行内容 -> other', () {
+      expect(
+        roleOf(packageName: 'com.android.mms', content: '【验证码】您的验证码是123456'),
+        SourceRole.other,
+      );
+    });
+
+    test('微信支付通知里提到「信用卡」也不能被当成银行', () {
+      // 这是必须靠包名判断的原因：微信通知正文可能写「使用招行信用卡支付」，
+      // 靠关键词会把支付平台通知误判成银行通知。
+      expect(
+        roleOf(
+          packageName: 'com.tencent.mm',
+          content: '你于2026年10月20日,使用招商银行(1234)信用卡支付31.31元',
+        ),
+        SourceRole.platform,
+      );
+    });
+
+    test('未知包名 -> other', () {
+      expect(roleOf(packageName: 'com.unknown.app', content: '扣款'), SourceRole.other);
+      expect(roleOf(packageName: null, content: '扣款'), SourceRole.other);
+    });
+  });
+
+  group('findDuplicate 整条判重链路', () {
+    final base = DateTime(2026, 10, 19, 12, 0);
+
+    Transaction record({
+      required String packageName,
+      required String content,
+      double amount = 31.31,
+      String type = 'expense',
+      DateTime? date,
+    }) =>
+        Transaction(
+          amount: amount,
+          type: type,
+          category: '转账',
+          date: date ?? base,
+          isAuto: true,
+          sourceApp: packageName,
+          note: content,
+        );
+
+    PaymentEvent event({
+      required String packageName,
+      required String content,
+      double amount = 31.31,
+      String type = 'expense',
+      DateTime? date,
+    }) =>
+        PaymentEvent(
+          amount: amount,
+          type: type,
+          sourceApp: packageName,
+          content: content,
+          timestamp: date ?? base,
+        );
+
+    const wechatContent = '微信支付 付款成功 ¥31.31';
+    const bankContent = '您尾号8888的储蓄卡于10月20日消费支出人民币31.31元';
+
+    test('库里已有微信那条，来了银行短信 -> 判为重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.android.mms', content: bankContent),
+        eventTime: base.add(const Duration(seconds: 40)),
+      );
+      expect(dup, isNotNull);
+      expect(dup!.sourceApp, 'com.tencent.mm');
+    });
+
+    test('库里已有银行那条，来了微信通知 -> 判为重复（顺序反过来也一样）', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.android.mms', content: bankContent)],
+        event: event(packageName: 'com.tencent.mm', content: wechatContent),
+        eventTime: base.add(const Duration(seconds: 20)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('同来源重复推送 -> 判为重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.tencent.mm', content: wechatContent),
+        eventTime: base.add(const Duration(minutes: 2)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('金额不同 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(
+          packageName: 'com.android.mms',
+          content: bankContent,
+          amount: 88.88,
+        ),
+        eventTime: base,
+      );
+      expect(dup, isNull);
+    });
+
+    test('隔太久（超过 5 分钟）-> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.android.mms', content: bankContent),
+        eventTime: base.add(const Duration(minutes: 8)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('方向不一致 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(
+          packageName: 'com.android.mms',
+          content: '您尾号8888的储蓄卡于10月20日入账人民币31.31元',
+          type: 'income',
+        ),
+        eventTime: base,
+      );
+      expect(dup, isNull);
+    });
+
+    test('两个陌生 App 之间 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.unknown.app', content: '扣款 31.31')],
+        event: event(packageName: 'com.android.mms', content: bankContent),
+        eventTime: base,
+      );
+      expect(dup, isNull);
+    });
+
+    test('关掉跨来源去重后 -> 平台与银行不再判重', () {
+      PaymentService.crossSourceEnabled = false;
+      addTearDown(() => PaymentService.crossSourceEnabled = true);
+
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.android.mms', content: bankContent),
+        eventTime: base.add(const Duration(seconds: 40)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('同来源的判重不受跨来源开关影响', () {
+      PaymentService.crossSourceEnabled = false;
+      addTearDown(() => PaymentService.crossSourceEnabled = true);
+
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.tencent.mm', content: wechatContent),
+        eventTime: base.add(const Duration(minutes: 2)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('银行 App 通知 + 微信通知 -> 也是同一笔', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc',
+            content: '您尾号8888的账户于10月20日消费支出人民币31.31元',
+          ),
+        ],
+        event: event(packageName: 'com.tencent.mm', content: wechatContent),
+        eventTime: base.add(const Duration(minutes: 1)),
+      );
+      expect(dup, isNotNull);
     });
   });
 }

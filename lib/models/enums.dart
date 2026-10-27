@@ -40,10 +40,28 @@ class Categories {
     {'娱乐': Icons.movie},
     {'医疗': Icons.medical_services},
     {'教育': Icons.school},
-    {'旅行': Icons.airplanemode_active},
+    {'旅行': Icons.flight},
     {'转账': Icons.account_balance_wallet},
     {'其他': Icons.category},
   ];
+
+  /// 分类的固定配色。
+  ///
+  /// 必须固定：以前用 `category.hashCode % Colors.primaries.length` 取色，
+  /// 同一个分类在不同设备/不同版本上可能是不同颜色，
+  /// 用户根本认不出「这个圆点是什么」。
+  static const Map<String, Color> _colors = {
+    '餐饮': Color(0xFFFF7043),
+    '交通': Color(0xFF42A5F5),
+    '购物': Color(0xFFAB47BC),
+    '日用': Color(0xFF26A69A),
+    '娱乐': Color(0xFFEC407A),
+    '医疗': Color(0xFFEF5350),
+    '教育': Color(0xFF5C6BC0),
+    '旅行': Color(0xFF29B6F6),
+    '转账': Color(0xFF8D6E63),
+    '其他': Color(0xFF78909C),
+  };
 
   static List<String> names() => all.map((e) => e.keys.first).toList();
 
@@ -51,4 +69,7 @@ class Categories {
       .firstWhere((e) => e.keys.first == name, orElse: () => {'其他': Icons.category})
       .values
       .first;
+
+  /// 分类的主色；认不出来的分类一律用「其他」的灰。
+  static Color colorOf(String name) => _colors[name] ?? _colors['其他']!;
 }

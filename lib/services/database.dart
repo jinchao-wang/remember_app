@@ -2,7 +2,6 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' hide Transaction;
 
 import '../models/transaction.dart';
-
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
   DatabaseHelper._();
@@ -20,7 +19,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'remember_local.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
 CREATE TABLE transactions(
@@ -40,6 +39,12 @@ CREATE TABLE transactions(
         await db.execute(
           'CREATE INDEX idx_transactions_external ON transactions(externalId)',
         );
+        await db.execute('''
+CREATE TABLE app_settings(
+  key TEXT PRIMARY KEY,
+  value TEXT
+)
+''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         // v2：账单导入需要用平台交易单号精确判重，加一列可空的 externalId。
@@ -50,7 +55,45 @@ CREATE TABLE transactions(
             'CREATE INDEX IF NOT EXISTS idx_transactions_external ON transactions(externalId)',
           );
         }
+        // v3：用户可配置项（目前只有「跨来源自动去重」）。
+        // 之前开关只存在内存里，重启 App 就恢复默认值，
+        // 用户明明关掉了却发现又开了。
+        if (oldVersion < 3) {
+          await db.execute('''
+CREATE TABLE IF NOT EXISTS app_settings(
+  key TEXT PRIMARY KEY,
+  value TEXT
+)
+''');
+        }
       },
+    );
+  }
+
+  /// 读一个布尔型设置项。
+  Future<bool> getBoolSetting(String key, {bool defaultValue = false}) async {
+    final db = await database;
+    final rows = await db.query(
+      'app_settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return defaultValue;
+    final v = rows.first['value'];
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    return '${v ?? ''}'.toLowerCase() == 'true';
+  }
+
+  /// 写一个布尔型设置项。
+  Future<void> setBoolSetting(String key, bool value) async {
+    final db = await database;
+    await db.insert(
+      'app_settings',
+      {'key': key, 'value': value ? '1' : '0'},
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 

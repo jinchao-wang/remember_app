@@ -9,6 +9,7 @@ import '../services/app_state.dart';
 import '../services/bill_import_service.dart';
 import '../services/database.dart';
 import '../services/listener_diagnostics.dart';
+import '../services/payment_service.dart';
 import '../utils/bill_parser.dart';
 import '../utils/csv_helper.dart';
 
@@ -723,6 +724,49 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   }
 
   /// 「x 分钟前」这样的相对时间。
+  /// 扫描历史账单，删掉跨来源的重复记录。
+  ///
+  /// 用户反馈「总是有重复账单」时，光修新的不够——
+  /// 已经记进去的那些也得能一键清掉。
+  Future<void> _cleanupDuplicates() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ids = await PaymentService.findCrossSourceDuplicates();
+    if (ids.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('没有发现重复账单'), duration: Duration(seconds: 2)),
+      );
+      return;
+    }
+    if (!mounted) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (inner) => AlertDialog(
+        title: const Text('清理重复账单'),
+        content: Text(
+          '发现 ${ids.length} 条重复记录（同一笔扣费被记了两次）。\n'
+          '每组重复只保留最早的那条，确定要删除多余的 ${ids.length} 条吗？',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(inner, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(inner, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final removed = await PaymentService.cleanupCrossSourceDuplicates();
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(removed > 0 ? '已删除 $removed 条重复记录' : '清理失败，请重试'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   String _timeAgo(DateTime? time) {
     if (time == null) return '从未';
     final diff = DateTime.now().difference(time);
@@ -769,12 +813,44 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                       onPressed: _showBillHelp,
                     ),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+            const Text('账单去重', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(
+              '同一笔扣费，微信支付和银行会各发一条通知。'
+              '开启后会识别出「平台通知 + 银行通知」说的是同一笔钱，只记一笔。',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600], height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    secondary: const Icon(Icons.merge_type, color: Colors.teal),
+                    title: const Text('跨来源自动去重'),
+                    subtitle: const Text('支付平台通知与银行通知金额相同、方向一致、时间接近时，只记一笔'),
+                    value: PaymentService.crossSourceEnabled,
+                    onChanged: (v) async {
+                      await PaymentService.setCrossSourceEnabled(v);
+                      if (!mounted) return;
+                      setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(v ? '已开启跨来源去重' : '已关闭跨来源去重'),
+                          duration: const Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                  ),
                   const Divider(height: 1),
                   ListTile(
-                    leading: const Icon(Icons.delete_outline, color: Colors.red),
-                    title: const Text('清空所有账单'),
-                    subtitle: const Text('删除所有记录，此操作不可撤销'),
-                    onTap: _clearAll,
+                    leading: const Icon(Icons.cleaning_services_outlined, color: Colors.orange),
+                    title: const Text('清理已有重复账单'),
+                    subtitle: const Text('扫描历史记录，删除重复的那几条（手动记的和改过的不会动）'),
+                    onTap: _cleanupDuplicates,
                   ),
                 ],
               ),
@@ -783,6 +859,17 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             const Text('自动记账（仅 Android）', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             _buildAutoRecordCard(),
+            const SizedBox(height: 32),
+            const Text('危险操作', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.delete_forever_outlined, color: Colors.red),
+                title: const Text('清空所有账单'),
+                subtitle: const Text('删除所有记录，此操作不可撤销'),
+                onTap: _clearAll,
+              ),
+            ),
             const SizedBox(height: 32),
             const Text('关于', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
