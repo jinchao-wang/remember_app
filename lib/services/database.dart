@@ -108,6 +108,18 @@ CREATE TABLE IF NOT EXISTS app_settings(
     return db.insert('transactions', t.toMap());
   }
 
+  /// 撤销删除：把记录原样插回去，**连原来的 id 一起**。
+  ///
+  /// 滑动删除后给用户一个「撤销」，误删了能救回来。
+  /// 必须连 id 一起插回去，否则这条记录在库里的身份就变了
+  /// （新 id 会让它排到列表末尾，用户会以为「撤销」没生效）。
+  Future<int> restoreTransaction(Transaction t) async {
+    final db = await database;
+    final values = t.toMap();
+    if (values['id'] == null) values.remove('id');
+    return db.insert('transactions', values);
+  }
+
   Future<void> insertAll(List<Transaction> list) async {
     if (list.isEmpty) return;
     final db = await database;

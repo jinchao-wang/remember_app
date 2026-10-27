@@ -6,6 +6,7 @@ import '../models/enums.dart';
 import '../models/transaction.dart';
 import '../services/app_state.dart';
 import '../services/database.dart';
+import '../theme/app_theme.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -97,7 +98,9 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
       ..sort((a, b) => catExpense[b]!.compareTo(catExpense[a]!));
     // 分类配色和账单页用同一张表：
     // 用户在账单页认过的颜色，到统计页还是那个颜色。
-    final catColors = catKeys.map(Categories.colorOf).toList();
+    // 深色模式下统一提亮，否则那套为白底设计的颜色在黑底上会糊掉。
+    final app = context.appColors;
+    final catColors = catKeys.map((c) => app.categoryColor(Categories.colorOf(c))).toList();
 
     // 一次遍历按天汇总。旧实现为每一天重新过滤整月账单，
     // 复杂度是 O(天数 × 笔数) 且每次都会分配一个临时 List。
@@ -178,6 +181,8 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
   }
 
   Widget _buildOverviewCard(double monthExpense, double monthIncome, double dayExpense, double dayIncome) {
+    final app = context.appColors;
+    final scheme = context.scheme;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -195,16 +200,16 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                   child: _summaryTile(
                     label: '本月支出',
                     value: _fmt(monthExpense),
-                    color: Colors.red,
+                    color: app.expense,
                     icon: Icons.arrow_downward,
                   ),
                 ),
-                Container(width: 1, height: 40, color: Colors.grey[300]),
+                Container(width: 1, height: 40, color: scheme.outlineVariant),
                 Expanded(
                   child: _summaryTile(
                     label: '本月收入',
                     value: _fmt(monthIncome),
-                    color: Colors.green,
+                    color: app.income,
                     icon: Icons.arrow_upward,
                   ),
                 ),
@@ -217,16 +222,16 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                   child: _summaryTile(
                     label: '今日支出',
                     value: _fmt(dayExpense),
-                    color: Colors.red,
+                    color: app.expense,
                     icon: Icons.arrow_downward,
                   ),
                 ),
-                Container(width: 1, height: 40, color: Colors.grey[300]),
+                Container(width: 1, height: 40, color: scheme.outlineVariant),
                 Expanded(
                   child: _summaryTile(
                     label: '今日收入',
                     value: _fmt(dayIncome),
-                    color: Colors.green,
+                    color: app.income,
                     icon: Icons.arrow_upward,
                   ),
                 ),
@@ -241,7 +246,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
   Widget _summaryTile({required String label, required String value, required Color color, required IconData icon}) {
     return Column(
       children: [
-        Row(children: [Icon(icon, size: 16, color: color), const SizedBox(width: 4), Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 12))]),
+        Row(children: [Icon(icon, size: 16, color: color), const SizedBox(width: 4), Text(label, style: TextStyle(color: context.scheme.onSurfaceVariant, fontSize: 12))]),
         const SizedBox(height: 4),
         Text(value, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color)),
       ],
@@ -266,14 +271,16 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
             ),
             const SizedBox(height: 16),
             if (total == 0)
-              const Center(child: Padding(
+              Center(child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 40),
-                child: Text('暂无数据', style: TextStyle(color: Colors.grey)),
+                child: Text('暂无数据', style: TextStyle(color: context.scheme.onSurfaceVariant)),
               ))
             else ...[
-              SizedBox(
-                height: 200,
-                child: PieChart(_buildPieData(catExpense, catKeys, catColors)),
+              RepaintBoundary(
+                child: SizedBox(
+                  height: 188,
+                  child: PieChart(_buildPieData(catExpense, catKeys, catColors)),
+                ),
               ),
               const SizedBox(height: 20),
               const Divider(height: 1),
@@ -285,7 +292,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
               const SizedBox(height: 4),
               Text(
                 '按金额从多到少，一眼看出钱花在哪了',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: context.scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
               ...List.generate(catKeys.length, (i) {
@@ -306,7 +313,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
   /// 以前图例是一堆挤在一起的文字，金额一多就排得乱七八糟，
   /// 也没法快速比较「哪个花得多」——排行条直接回答这个问题。
   Widget _buildRankRow(String category, double value, double pct, Color color) {
-    final scheme = Theme.of(context).colorScheme;
+    final scheme = context.scheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Column(
@@ -327,7 +334,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
               const SizedBox(width: 8),
               Text(
                 '${(pct * 100).toStringAsFixed(1)}%',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
               const Spacer(),
               Text(
@@ -362,17 +369,23 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
       for (var i = 0; i < catKeys.length; i++)
         PieChartSectionData(
           value: catExpense[catKeys[i]]!,
-          title: total == 0
+          // 小扇区不写百分比：一堆 4%、5% 挤在一起互相压着，谁也看不清。
+          // 具体数字下面「分类排行」里都有。
+          title: total == 0 || catExpense[catKeys[i]]! / total < 0.08
               ? ''
               : '${(catExpense[catKeys[i]]! / total * 100).toStringAsFixed(0)}%',
           color: catColors[i],
-          radius: 70,
+          radius: 80,
           titleStyle: const TextStyle(
-              fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500),
+              fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600),
         ),
     ];
     return PieChartData(
-        sections: sections, centerSpaceRadius: 0, borderData: FlBorderData(show: false));
+      sections: sections,
+      centerSpaceRadius: 0,
+      sectionsSpace: 2,
+      borderData: FlBorderData(show: false),
+    );
   }
 
   Widget _buildTrendCard(List<FlSpot> lineSpots, double maxY) {
@@ -397,7 +410,7 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
                   maxY: maxY,
                   lineTouchData: LineTouchData(
                     touchTooltipData: LineTouchTooltipData(
-                      getTooltipColor: (touchedSpot) => Colors.blueGrey,
+                      getTooltipColor: (touchedSpot) => context.scheme.inverseSurface,
                       getTooltipItems: (spots) => spots.map((s) {
                         return LineTooltipItem(
                           '${s.x.toInt() + 1}日\n${_fmt(s.y)}',

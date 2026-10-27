@@ -8,6 +8,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:remember_app/screens/home_screen.dart';
 import 'package:remember_app/services/notification_listener.dart';
 import 'package:remember_app/services/payment_service.dart';
+import 'package:remember_app/theme/app_theme.dart';
+import 'package:remember_app/utils/frame_monitor.dart';
 
 /// 持有订阅引用，避免被 GC 回收导致自动记账中断。
 StreamSubscription<PaymentEvent>? paymentSubscription;
@@ -15,6 +17,8 @@ StreamSubscription<PaymentEvent>? paymentSubscription;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('zh_CN', null);
+  // 开发期掉帧监视（release 构建里是空实现）。
+  FrameMonitor.start();
   // 先把设置读进来：监听服务随时可能推来第一条通知，
   // 那时候开关必须已经是用户选定的值。
   await PaymentService.loadSettings();
@@ -49,20 +53,8 @@ class RememberApp extends StatelessWidget {
     return MaterialApp(
       title: 'Remember 记账',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4CAF50),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF66BB6A),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(brightness: Brightness.light),
+      darkTheme: buildAppTheme(brightness: Brightness.dark),
       themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );

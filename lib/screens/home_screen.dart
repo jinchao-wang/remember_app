@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:remember_app/screens/transaction_list_screen.dart';
 import 'package:remember_app/screens/stats_screen.dart';
 import 'package:remember_app/screens/settings_screen.dart';
 import 'package:remember_app/screens/add_edit_screen.dart';
 import 'package:remember_app/services/listener_diagnostics.dart';
+import 'package:remember_app/theme/app_theme.dart';
+import 'package:remember_app/utils/frame_monitor.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,6 +44,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _refreshDiagnostics();
     }
+    // 退到后台时把这次的帧统计打出来，方便开发期量性能。
+    if (state == AppLifecycleState.paused) {
+      FrameMonitor.report();
+    }
   }
 
   Future<void> _refreshDiagnostics() async {
@@ -70,22 +77,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     return Material(
-      color: Colors.orange.shade50,
+      color: context.scheme.errorContainer,
       child: InkWell(
         onTap: () => setState(() => _index = 2),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             children: [
-              Icon(icon, size: 18, color: Colors.orange.shade900),
+              Icon(icon, size: 18, color: context.scheme.onErrorContainer),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   message,
-                  style: const TextStyle(fontSize: 12, color: Colors.black87),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.scheme.onErrorContainer,
+                  ),
                 ),
               ),
-              const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+              Icon(Icons.chevron_right, size: 18, color: context.scheme.onErrorContainer),
             ],
           ),
         ),
@@ -139,6 +149,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _onTabSelected(int index) {
+    if (index == _index) return;
+    HapticFeedback.selectionClick();
     setState(() {
       _index = index;
     });
@@ -206,11 +218,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // 「记一笔」只在账单页出现。
       // 统计页和设置页用不到它，悬浮在右下角反而挡住图表和内容。
       floatingActionButton: _index == 0
-          ? FloatingActionButton(
-              onPressed: _showAddScreen,
-              tooltip: '记一笔',
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              child: const Icon(Icons.add, color: Colors.white),
+          ? TweenAnimationBuilder<double>(
+              // key 跟着页签走：从别的页切回账单页时按钮会重新弹一下，
+              // 告诉用户「它回来了」。
+              key: ValueKey(_index),
+              tween: Tween<double>(begin: 0.75, end: 1),
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutBack,
+              builder: (context, value, child) =>
+                  Transform.scale(scale: value, child: child),
+              child: FloatingActionButton(
+                onPressed: _showAddScreen,
+                tooltip: '记一笔',
+                child: const Icon(Icons.add),
+              ),
             )
           : null,
     );

@@ -12,6 +12,7 @@ import '../services/listener_diagnostics.dart';
 import '../services/payment_service.dart';
 import '../utils/bill_parser.dart';
 import '../utils/csv_helper.dart';
+import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -298,7 +299,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
               children: [
                 Icon(
                   _listening ? Icons.check_circle : Icons.warning,
-                  color: _listening ? Colors.green : Colors.orange,
+                  color: _listening ? context.appColors.income : context.scheme.error,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -314,7 +315,10 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                       const SizedBox(height: 4),
                       Text(
                         _statusSubtitle(diag),
-                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                        style: TextStyle(
+                          color: context.scheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -516,9 +520,12 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: Colors.grey[600]),
+          Icon(icon, size: 16, color: context.scheme.onSurfaceVariant),
           const SizedBox(width: 8),
-          Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: context.scheme.onSurfaceVariant),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -627,7 +634,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
           Icon(
             r.recognized ? Icons.check_circle : Icons.error_outline,
             size: 18,
-            color: r.recognized ? Colors.green : Colors.orange,
+            color: r.recognized ? context.appColors.income : context.scheme.error,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -648,7 +655,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                   r.recognized ? '已记账：${r.reason}' : '未记账：${r.reason}',
                   style: TextStyle(
                     fontSize: 11,
-                    color: r.recognized ? Colors.green : Colors.orange,
+                    color: r.recognized ? context.appColors.income : context.scheme.error,
                   ),
                 ),
                 if (_canManuallyRecord(r)) ...[
