@@ -281,14 +281,16 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
 
   /// 自动记账卡片。
   ///
-  /// 除了「有没有授权」，还要能回答「服务到底连上了没」「收到的通知长什么样」
-  /// 「为什么没记」——否则用户只看到一句「通知监听已开启」，问题就卡死在黑盒里。
+  /// 默认只摆用户真正用得上的东西：现在是什么状态、不正常时该怎么办。
+  /// 那些诊断细节（保活重连次数、上次连接时刻、国产 ROM 的三个开关……）
+  /// 全部收进「诊断详情」折叠区——用户反馈过设置页又挤又杂，
+  /// 那些信息平时根本用不上，摊开只是噪音。
   Widget _buildAutoRecordCard() {
     final diag = _diagnostics;
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -330,19 +332,14 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                 ),
               ),
             ] else if (diag != null) ...[
-              const SizedBox(height: 12),
-              _buildServiceState(diag),
-              const SizedBox(height: 10),
-              _buildReconnectRow(),
-              if (!diag.serviceLooksConnected) ...[
-                const SizedBox(height: 12),
-                _buildRomHints(),
+              if (diag.listenerLooksStuck) ...[
+                const SizedBox(height: 10),
+                _stuckWarning(),
               ],
+              const SizedBox(height: 12),
+              _buildReconnectRow(),
+              _buildDiagnostics(diag),
             ],
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            _buildRecentNotifications(),
           ],
         ),
       ),
@@ -350,6 +347,9 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   }
 
   /// 状态标题下面那行说明。
+  ///
+  /// 一句话讲清「现在能不能记上账」：服务连没连、最近收没收到通知
+  /// 都放在这一行，不用再往下翻一屏去找。
   String _statusSubtitle(ListenerDiagnostics? diag) {
     if (_checking) return '';
     if (!_listening) return '需在系统设置中开启通知权限，支付通知才能自动记录';
@@ -357,54 +357,53 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
     if (!diag.serviceEverConnected) {
       return '已授权，但系统还没有拉起过监听服务，目前收不到任何通知';
     }
-    return '支付通知将自动记录为账单';
+    if (!diag.serviceLooksConnected) return '监听服务已断开，点下面的按钮重连';
+    final at = diag.lastEventAt;
+    if (at == null) return '服务已连接，等系统推送通知';
+    return '服务已连接 · 最近收到通知 ${_timeAgo(at)}';
   }
 
-  /// 服务连接状态与「最近一次收到通知」的时间。
-  Widget _buildServiceState(ListenerDiagnostics diag) {
-    final alive = diag.serviceLooksConnected;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: alive ? Colors.green.shade50 : Colors.orange.shade50,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  /// 「诊断详情」折叠区。
+  ///
+  /// 里面的东西平时用不上，真出问题时又非常有用，
+  /// 所以是收起来而不是删掉。
+  Widget _buildDiagnostics(ListenerDiagnostics diag) {
+    final connected = diag.serviceLooksConnected;
+    final connectedAt = diag.serviceConnectedAt;
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        dense: true,
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(bottom: 4),
+        title: const Text('诊断详情', style: TextStyle(fontSize: 14)),
         children: [
           _diagRow(
             Icons.sensors,
             '监听服务',
-            alive ? '已连接' : '未连接',
-            '上次连接：${_timeAgo(diag.serviceConnectedAt)}',
+            connected
+                ? (connectedAt == null ? '已连接' : '已连接 · ${_timeAgo(connectedAt)}连接')
+                : '未连接',
           ),
-          const SizedBox(height: 6),
           _diagRow(
             Icons.notifications_active,
             '最近收到通知',
             _timeAgo(diag.lastEventAt),
-            diag.lastEventAt == null ? '一条都没收到过' : '任意通知（含聊天消息）',
           ),
-          const SizedBox(height: 6),
           _diagRow(
             Icons.receipt_long,
             '最近支付类通知',
             _timeAgo(diag.lastNotificationAt),
-            '',
           ),
-          const SizedBox(height: 6),
           _diagRow(
             Icons.autorenew,
             '自动保活',
-            diag.keepAliveArmed ? '已开启' : '未开启',
-            diag.rebindCount > 0
-                ? '已重连 ${diag.rebindCount} 次 · 上次 ${_timeAgo(diag.lastRebindAt)}'
-                : '每 15 分钟自动重连一次',
+            diag.keepAliveArmed
+                ? '已开启 · 已重连 ${diag.rebindCount} 次'
+                : '未开启',
           ),
-          if (diag.listenerLooksStuck) ...[
-            const SizedBox(height: 8),
-            _stuckWarning(),
-          ],
+          const SizedBox(height: 12),
+          _buildRomHints(),
         ],
       ),
     );
@@ -412,32 +411,22 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
 
   /// 「系统说连着、实际收不到」的僵死告警。
   ///
-  /// 这是用户报的那个故障最典型的形态：
-  /// 设置里勾着、系统也说「已连接」，但通知一个都收不到。
-  /// 光看「已连接」是发现不了的，得看「多久没收到任何通知了」。
+  /// 原来是一个占掉半屏的大橙框 + 一长段解释，
+  /// 而且阈值太紧，服务好好的时候也会跳出来吓人。
+  /// 现在压成一行提示。
   Widget _stuckWarning() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.orange.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.orange.shade200),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.warning_amber_rounded, size: 18, color: Colors.orange.shade800),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '系统显示「已连接」，但已经很久没收到任何通知了——'
-              '多半是监听绑定被系统解绑后没绑回来。点下面的按钮重连一下。',
-              style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
-            ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.info_outline, size: 16, color: Colors.orange.shade700),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '超过 2 小时没收到任何通知。如果付了钱没记账，点下面重连一次。',
+            style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -447,17 +436,13 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   /// 最麻烦的故障是**绑定僵死**：系统以为还连着、界面也显示「已连接」，
   /// 但通知其实一个都收不到（这正是用户报的现象）。
   /// 这种情况下只有手动重置绑定才能救回来。
+  ///
+  /// 按钮上方原来那段「Android 偶尔会在后台把监听服务解绑……」的解释删掉了——
+  /// 按钮叫什么就够用户看懂，真出问题时页面里的告警会告诉他该做什么。
   Widget _buildReconnectRow() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '如果付了钱却一直没记账，先点这个重连一次监听服务。'
-          'Android 偶尔会在后台把监听服务解绑之后不再绑回来，'
-          '表现就是「刚装上好用，过一段时间就收不到了」。',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        const SizedBox(height: 8),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
@@ -516,27 +501,36 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
     );
   }
 
-  Widget _diagRow(IconData icon, String label, String value, String hint) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        const SizedBox(width: 8),
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-        const Spacer(),
-        Flexible(
-          child: Text(
-            value,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            textAlign: TextAlign.right,
+  /// 一行「标签 : 值」。
+  ///
+  /// 旧版这里是 `Text(label) + Spacer() + Flexible(value) + Text(hint)` 四段挤在一行。
+  /// `Spacer` 和 `Flexible` 各占一半弹性空间，而 `hint` 是不伸缩的长文本
+  /// （「已重连 17 次 · 上次 刚刚」），值被压到只剩几像素宽——
+  /// 「已连接」就被挤成竖着的「已连 / 接」。
+  ///
+  /// 现在只留两段：标签和值，中间用 [Expanded] 把值推到右边靠右对齐，
+  /// 补充说明一律并进值里，不再单独占一列。
+  Widget _diagRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: Colors.grey[600]),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        ),
-        if (hint.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Text(hint, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -546,9 +540,8 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          '部分国产系统（小米 / 华为 / OPPO / vivo 等）会限制后台服务，'
-          '系统勾了「通知使用权」也不一定能把监听服务拉起来。'
-          '如果一直没收到通知，请允许本 App 自启动，并把它加入电池优化白名单。',
+          '国产系统（小米 / 华为 / OPPO / vivo）会限制后台服务，'
+          '如果一直没收到通知，请允许自启动并加入电池优化白名单。',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 10),
@@ -578,40 +571,50 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   }
 
   /// 最近收到的通知（含没被记账的），用来回答「到底收到没有」。
+  ///
+  /// 最多能列 20 条，摊开来很长，所以默认收起来——
+  /// 平时没人关心它，真出问题时点开看就行。
   Widget _buildRecentNotifications() {
     final list = _diagnostics?.recentNotifications ?? const <NotificationRecord>[];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        title: const Text('最近收到的通知', style: TextStyle(fontSize: 14)),
+        subtitle: Text(
+          list.isEmpty ? '还没有收到疑似支付类的通知' : '${list.length} 条',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Expanded(
-              child: Text('最近收到的通知', style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
-            TextButton.icon(
-              onPressed: _loadDiagnostics,
+            IconButton(
               icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('刷新'),
+              tooltip: '刷新',
+              onPressed: _loadDiagnostics,
             ),
+            const Icon(Icons.expand_more),
           ],
         ),
-        const SizedBox(height: 4),
-        if (list.isEmpty)
+        children: [
+          if (list.isEmpty)
+            const Text(
+              '付一笔钱之后回来刷新，就能看到系统到底送来了什么。'
+              '如果已经付过钱、这里却还是空的，说明系统根本没把通知送过来——'
+              '通常是国产 ROM 限制了后台服务，按「诊断详情」里的开关处理即可。',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            )
+          else
+            ...list.take(20).map(_buildNotificationRow),
+          const SizedBox(height: 8),
           const Text(
-            '还没有收到疑似支付类的通知。付一笔钱之后回来刷新，就能看到系统到底送来了什么。\n'
-            '如果已经付过钱、这里却还是空的，说明系统根本没把通知送过来——'
-            '通常是国产 ROM 限制了后台服务，按上面的「允许自启动」「电池优化白名单」处理即可。',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          )
-        else
-          ...list.take(20).map(_buildNotificationRow),
-        const SizedBox(height: 8),
-        const Text(
-          '仅在本机保存最近 50 条通知原文用于排查，不联网、不上传。',
-          style: TextStyle(fontSize: 11, color: Colors.grey),
-        ),
-      ],
+            '仅在本机保存最近 50 条通知原文用于排查，不联网、不上传。',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ],
+      ),
     );
   }
 
@@ -791,14 +794,14 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                   ListTile(
                     leading: const Icon(Icons.upload_file, color: Colors.blue),
                     title: const Text('导出 CSV'),
-                    subtitle: const Text('将账单导出为 CSV 文件保存到本地'),
+                    subtitle: const Text('把账单导出成文件'),
                     onTap: _exportCsv,
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.download, color: Colors.green),
                     title: const Text('导入 CSV'),
-                    subtitle: const Text('从 CSV 文件导入账单（跳过重复记录）'),
+                    subtitle: const Text('从文件导入账单'),
                     onTap: _importCsv,
                   ),
                   const Divider(height: 1),
@@ -820,8 +823,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             const Text('账单去重', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(
-              '同一笔扣费，微信支付和银行会各发一条通知。'
-              '开启后会识别出「平台通知 + 银行通知」说的是同一笔钱，只记一笔。',
+              '同一笔扣费，微信和银行会各发一条通知。开启后只记一笔。',
               style: TextStyle(fontSize: 12, color: Colors.grey[600], height: 1.5),
             ),
             const SizedBox(height: 12),
@@ -831,7 +833,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                   SwitchListTile(
                     secondary: const Icon(Icons.merge_type, color: Colors.teal),
                     title: const Text('跨来源自动去重'),
-                    subtitle: const Text('支付平台通知与银行通知金额相同、方向一致、时间接近时，只记一笔'),
+                    subtitle: const Text('平台通知和银行通知金额相同、时间接近时，只记一笔'),
                     value: PaymentService.crossSourceEnabled,
                     onChanged: (v) async {
                       await PaymentService.setCrossSourceEnabled(v);
@@ -849,7 +851,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                   ListTile(
                     leading: const Icon(Icons.cleaning_services_outlined, color: Colors.orange),
                     title: const Text('清理已有重复账单'),
-                    subtitle: const Text('扫描历史记录，删除重复的那几条（手动记的和改过的不会动）'),
+                    subtitle: const Text('扫描历史记录，删掉重复的那几条'),
                     onTap: _cleanupDuplicates,
                   ),
                 ],
@@ -859,6 +861,8 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             const Text('自动记账（仅 Android）', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             _buildAutoRecordCard(),
+            const SizedBox(height: 12),
+            Card(child: _buildRecentNotifications()),
             const SizedBox(height: 32),
             const Text('危险操作', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
@@ -875,29 +879,20 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             const SizedBox(height: 16),
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Remember 记账 v1.0', style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 8),
                     Text(
-                      '本地优先，数据存储在设备上，不联网，不上传服务器。',
+                      '本地优先，数据存在手机上，不联网、不上传。',
                       style: TextStyle(color: Colors.grey[600], fontSize: 14),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '支持 Android 支付通知自动记账，iOS 支持手动记账。',
+                      'Android 支付通知自动记账，iOS 手动记账。',
                       style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                    ),
-                    Text(
-                      '微信/支付宝 App 内转账不会发通知，可用「导入微信/支付宝账单」补记。',
-                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '开发日期：2026年',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
                     ),
                   ],
                 ),

@@ -166,6 +166,19 @@ class ListenerDiagnostics {
   /// 与原生层 `ListenerHealth.ALIVE_WINDOW_MS` 保持一致。
   static const int aliveWindowMinutes = 30;
 
+  /// 面向用户的「疑似僵死」阈值：2 小时。
+  ///
+  /// [aliveWindowMinutes] 是 30 分钟，那是**内部判据**——原生层用它决定
+  /// 重绑时要不要动组件（`ListenerHealth.isRecentlyAlive`），不能动。
+  ///
+  /// 但拿 30 分钟直接去报警会误报得厉害：一两个小时没收到任何通知
+  /// （连聊天消息都没有）太正常了，用户在设置页却会跳出一个大橙框，
+  /// 还和旁边「最近收到通知 1 小时前」自相矛盾，看着就像坏了。
+  ///
+  /// 所以给用户看的提示用宽松得多的 2 小时：超过这么久一个字都没收到，
+  /// 才值得提醒一下。
+  static const int stuckWarningMinutes = 120;
+
   /// 监听服务最近看起来还活着吗。
   ///
   /// 判据是 [lastEventAt]：最近半小时内收到过任何一条通知就算活着。
@@ -173,16 +186,24 @@ class ListenerDiagnostics {
   /// 这一条专门用来识别用户报的那个故障：
   /// 系统那边显示「已连接」，但实际上一个通知都收不到——
   /// 这时 [serviceLooksConnected] 会是 true（骗人），只有这个能看出问题。
-  bool get listenerLooksAlive {
+  bool get listenerLooksAlive => _aliveWithin(aliveWindowMinutes);
+
+  /// 超过 [_minutes] 分钟没收到过任何通知就算不活跃。
+  bool _aliveWithin(int minutes) {
     final at = lastEventAt;
     if (at == null) return false;
     final diff = DateTime.now().difference(at).inMinutes;
-    return diff >= 0 && diff < aliveWindowMinutes;
+    return diff >= 0 && diff < minutes;
   }
 
   /// 出现了「系统说连着、实际却收不到」这种僵死状态。
+  ///
+  /// 用的是面向用户的宽松阈值（[stuckWarningMinutes]），
+  /// 宁可提醒得晚一点，也不要天天误报吓人。
   bool get listenerLooksStuck =>
-      serviceLooksConnected && serviceEverConnected && !listenerLooksAlive;
+      serviceLooksConnected &&
+      serviceEverConnected &&
+      !_aliveWithin(stuckWarningMinutes);
 
   /// 按记录判断，监听服务最后一次已知的状态是不是「已连接」。
   ///
