@@ -29,6 +29,9 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   bool _checking = true;
   ListenerDiagnostics? _diagnostics;
 
+  /// 「后台常驻监听」的现状（开关、服务在不在跑、通知权限给了没）。
+  BackgroundMonitoringStatus? _background;
+
   /// 「重新连接监听服务」是否正在进行。
   ///
   /// 重连要跑几秒（原生层最多等 6 秒），期间禁掉按钮，
@@ -87,8 +90,55 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
   /// 拉取诊断信息：服务有没有真的连上、最近收到了什么通知。
   Future<void> _loadDiagnostics() async {
     final diag = await ListenerDiagnosticsService.fetch();
+    final bg = await ListenerDiagnosticsService.fetchBackgroundMonitoring();
     if (!mounted) return;
-    setState(() => _diagnostics = diag);
+    setState(() {
+      _diagnostics = diag;
+      _background = bg;
+    });
+  }
+
+  /// 开关「后台常驻监听」。
+  ///
+  /// 开着的时候 App 会在通知栏留一条常驻通知，进程被系统回收后
+  /// 由系统重新拉起——这是「退到后台还能继续监听」的关键。
+  Future<void> _toggleBackgroundMonitoring(bool enabled) async {
+    final ok = await ListenerDiagnosticsService.setBackgroundMonitoring(enabled);
+    if (enabled && ok) {
+      // Android 13+ 常驻通知要 POST_NOTIFICATIONS 权限才显示得出来。
+      // 不给也不影响服务运行，只是用户看不见那条提示，
+      // 会以为「开了没反应」，所以这里主动要一次。
+      await ListenerDiagnosticsService.requestNotificationPermission();
+    }
+    await _loadDiagnostics();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          enabled
+              ? '后台常驻监听已开启，退到后台也会继续监听'
+              : '后台常驻监听已关闭，退到后台后可能被系统清理',
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  /// 单独申请通知权限（Android 13+ 常驻通知需要它才显示得出来）。
+  Future<void> _requestNotificationPermission() async {
+    final granted = await ListenerDiagnosticsService.requestNotificationPermission();
+    await _loadDiagnostics();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          granted
+              ? '已允许显示常驻提示'
+              : '没给通知权限，后台监听仍然正常，只是不显示常驻提示',
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _openNotificationSettings() async {
@@ -340,8 +390,13 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                 const SizedBox(height: 10),
                 _stuckWarning(),
               ],
+              if (diag.killNeedsUserAction) ...[
+                const SizedBox(height: 10),
+                _killNotRecoveredWarning(),
+              ],
               const SizedBox(height: 12),
               _buildReconnectRow(),
+              _buildBackgroundMonitoringRow(),
               _buildDiagnostics(diag),
             ],
           ],
@@ -406,11 +461,42 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                 ? '已开启 · 已重连 ${diag.rebindCount} 次'
                 : '未开启',
           ),
+          _diagRow(
+            Icons.phonelink_lock,
+            '后台常驻服务',
+            diag.foregroundServiceRunning ? '运行中' : '未运行',
+          ),
+          _diagRow(
+            Icons.healing,
+            '自动修复',
+            _autoRepairHint(diag),
+          ),
+          _diagRow(
+            Icons.power_settings_new,
+            '上次进程结束',
+            diag.lastKillAt == null
+                ? '无记录'
+                : '${_timeAgo(diag.lastKillAt)} · ${diag.lastKillReason}'
+                    '${diag.killRecovered ? ' · 已自动恢复' : ''}',
+          ),
           const SizedBox(height: 12),
           _buildRomHints(),
         ],
       ),
     );
+  }
+
+  /// 自动修复做过什么。
+  ///
+  /// 这一栏的意义是「App 不是在干等」：
+  /// 用户反馈监听又没了时，能看到 App 自己试过没有、做到了哪一步。
+  String _autoRepairHint(ListenerDiagnostics diag) {
+    final at = diag.autoRepairAt;
+    if (at == null) return '尚未触发';
+    final message = diag.autoRepairMessage.isEmpty
+        ? diag.autoRepairResult
+        : diag.autoRepairMessage;
+    return '${_timeAgo(at)} · $message';
   }
 
   /// 「系统说连着、实际收不到」的僵死告警。
@@ -428,6 +514,37 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
           child: Text(
             '超过 2 小时没收到任何通知。如果付了钱没记账，点下面重连一次。',
             style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 「上次进程结束后监听没连回来」的告警。
+  ///
+  /// 这是唯一一种**救不回来**的故障：进程被系统结束之后，
+  /// 监听服务没能重新绑上（典型原因是被「强行停止」——
+  /// Android 会把 App 标记为 stopped，此时**不跑任何组件**：
+  /// 闹钟、后台服务、Job 全停，通知监听也不会被系统绑定）。
+  ///
+  /// 任何 App 都绕不过这条平台限制，唯一的办法是让用户重新打开一次。
+  /// 所以必须明确告诉用户「现在不会自动恢复」，别让他干等。
+  ///
+  /// 判据不是死因（划掉还是强停，公开 API 分不清），
+  /// 而是「监听到底连上了没有」——这个测得准。
+  Widget _killNotRecoveredWarning() {
+    final d = _diagnostics;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.error_outline, size: 16, color: context.scheme.error),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '上次进程在 ${_timeAgo(d?.lastKillAt)} 结束'
+            '${d?.lastKillReason == null || d!.lastKillReason.isEmpty ? '' : '（${d.lastKillReason}）'}，'
+            '之后监听没能重新连上。请重新打开一次 App 恢复。',
+            style: TextStyle(fontSize: 12, color: context.scheme.error),
           ),
         ),
       ],
@@ -474,6 +591,89 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
         ],
       ],
     );
+  }
+
+  /// 「后台常驻监听」开关。
+  ///
+  /// 这是「退到后台也能继续监听」的那一环：常驻前台服务让进程优先级更高，
+  /// 国产 ROM 的「一键清理」一般会跳过它，系统回收进程后也会重新拉起它。
+  ///
+  /// 代价是通知栏会多一条常驻通知，所以做成可关的。
+  Widget _buildBackgroundMonitoringRow() {
+    final bg = _background;
+    final enabled = bg?.enabled ?? true;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Icon(
+              Icons.phonelink_lock,
+              size: 20,
+              color: context.scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '后台常驻监听',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _backgroundMonitoringHint,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  // Android 13+ 没给通知权限的话，常驻通知不会出现在通知栏，
+                  // 用户会以为「开了没反应」。给一个明确的授权入口。
+                  if (bg != null && bg.enabled && !bg.notificationPermissionGranted)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _requestNotificationPermission,
+                        icon: const Icon(Icons.notifications_active, size: 16),
+                        label: const Text('允许显示常驻提示'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          visualDensity: VisualDensity.compact,
+                          textStyle: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: _toggleBackgroundMonitoring,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 常驻监听这一行下面的小字。
+  ///
+  /// 把「开关开着」和「服务真的在跑」分开说——
+  /// 用户被清理之后开关还是开着的，但服务已经没了，
+  /// 只看开关会以为一切正常。
+  String get _backgroundMonitoringHint {
+    final bg = _background;
+    if (bg == null) return '退到后台后继续监听支付通知';
+    if (!bg.enabled) return '已关闭 · 退到后台后可能被系统清理';
+    if (!bg.running) return '未运行 · 进程被系统清掉了，重新打开一次 App 即可恢复';
+    if (!bg.notificationPermissionGranted) {
+      return '运行中 · 但没给通知权限，通知栏看不到常驻提示';
+    }
+    return '运行中 · 通知栏有一条常驻提示';
   }
 
   /// 上一次重连的结果。

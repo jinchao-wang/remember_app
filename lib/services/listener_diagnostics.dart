@@ -141,6 +141,33 @@ class ListenerDiagnostics {
   /// 最后一次重连的结果说明（原生层给用户的文案）。
   final String lastReconnectMessage;
 
+  /// 用户是否开启了「后台常驻监听」。
+  final bool backgroundMonitoring;
+
+  /// 后台常驻前台服务现在是不是真的在跑。
+  final bool foregroundServiceRunning;
+
+  /// 最后一次自动「重置监听组件」的时间。
+  ///
+  /// 这一招有副作用（系统可能临时拉黑监听器），所以自动路径上限频，
+  /// 这一条就是给用户查「上次自动动过组件是什么时候」。
+  final DateTime? lastEscalateAt;
+
+  /// 最后一次自动修复尝试的时间。
+  final DateTime? autoRepairAt;
+
+  /// 最后一次自动修复的结果：alive / rebind / escalated / escalate_failed / unauthorized。
+  final String autoRepairResult;
+
+  /// 最后一次自动修复的说明。
+  final String autoRepairMessage;
+
+  /// 进程最后一次被系统结束的时间。
+  final DateTime? lastKillAt;
+
+  /// 进程最后一次被结束的原因（原生层给的中文说明）。
+  final String lastKillReason;
+
   const ListenerDiagnostics({
     required this.listenerEnabled,
     this.serviceConnectedAt,
@@ -156,6 +183,14 @@ class ListenerDiagnostics {
     this.lastReconnectOk = false,
     this.lastReconnectStage = '',
     this.lastReconnectMessage = '',
+    this.backgroundMonitoring = true,
+    this.foregroundServiceRunning = false,
+    this.lastEscalateAt,
+    this.autoRepairAt,
+    this.autoRepairResult = '',
+    this.autoRepairMessage = '',
+    this.lastKillAt,
+    this.lastKillReason = '',
   });
 
   /// 监听服务是否曾经被系统绑定过。
@@ -217,6 +252,43 @@ class ListenerDiagnostics {
     return connected.isAfter(disconnected);
   }
 
+  /// 上次进程结束之后，监听有没有自己连回来。
+  ///
+  /// 这是**测得准**的那个判据，也是用户真正需要知道的：
+  /// 「上次进程没了，之后还能不能记账？」
+  ///
+  /// 为什么不靠退出原因来判断？因为 Android 14 上
+  /// 「从最近任务划掉」和「设置里点强行停止」记的都是
+  /// `REASON_USER_REQUESTED`，只有内部 subreason 不同，
+  /// 而那个 subreason 不是公开 API（`javap` 查过 android.jar，没有
+  /// `getSubreason`）——公开 API 分不清这两种死法。
+  ///
+  /// 硬猜只会给出错误结论（比如把「划掉」说成「被强行停止」，
+  /// 或者反过来）。所以这里只回答测得准的问题：
+  /// **现在监听连上了没有**。
+  bool get killNeedsUserAction {
+    final killed = lastKillAt;
+    if (killed == null) return false;
+    final connected = serviceConnectedAt;
+    // 进程结束之后再没连上过 → 系统没能自己恢复，得让用户开一次 App。
+    return connected == null || !connected.isAfter(killed);
+  }
+
+  /// 上次进程结束后，监听自己连回来了。
+  bool get killRecovered {
+    final killed = lastKillAt;
+    if (killed == null) return false;
+    final connected = serviceConnectedAt;
+    return connected != null && connected.isAfter(killed);
+  }
+
+  /// 后台常驻服务该有的样子：开关开着、服务也真的在跑。
+  ///
+  /// 开关开着但服务没跑，说明进程被清掉了，
+  /// 得让用户重新打开一次 App（或者点一下开关）。
+  bool get backgroundMonitoringHealthy =>
+      backgroundMonitoring && foregroundServiceRunning;
+
   /// 解析原生返回的 Map。
   factory ListenerDiagnostics.fromMap(Map<dynamic, dynamic> map) {
     final raw = map['recentNotifications'];
@@ -247,6 +319,15 @@ class ListenerDiagnostics {
       lastReconnectOk: (map['lastReconnectOk'] as bool?) ?? false,
       lastReconnectStage: (map['lastReconnectStage'] as String?) ?? '',
       lastReconnectMessage: (map['lastReconnectMessage'] as String?) ?? '',
+      backgroundMonitoring: (map['backgroundMonitoring'] as bool?) ?? true,
+      foregroundServiceRunning:
+          (map['foregroundServiceRunning'] as bool?) ?? false,
+      lastEscalateAt: ts(map['lastEscalateAt']),
+      autoRepairAt: ts(map['autoRepairAt']),
+      autoRepairResult: (map['autoRepairResult'] as String?) ?? '',
+      autoRepairMessage: (map['autoRepairMessage'] as String?) ?? '',
+      lastKillAt: ts(map['lastKillAt']),
+      lastKillReason: (map['lastKillReason'] as String?) ?? '',
     );
   }
 }
@@ -282,6 +363,53 @@ class ListenerDiagnosticsService {
 
   /// 打开各厂商的「自启动管理」页面。
   static Future<void> openAutoStartSettings() => _invoke('openAutoStartSettings');
+
+  /// 查后台常驻监听的现状。
+  ///
+  /// 取不到时返回 null（iOS 没有这套东西）。
+  static Future<BackgroundMonitoringStatus?> fetchBackgroundMonitoring() async {
+    try {
+      final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getBackgroundMonitoring',
+      );
+      if (raw == null) return null;
+      return BackgroundMonitoringStatus.fromMap(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 开关「后台常驻监听」。
+  ///
+  /// 开着的时候，App 会在通知栏留一条常驻通知，
+  /// 进程被系统回收后由系统重新拉起——这是「退到后台还能监听」的关键。
+  static Future<bool> setBackgroundMonitoring(bool enabled) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'setBackgroundMonitoring',
+        {'enabled': enabled},
+      );
+      return ok ?? enabled;
+    } catch (_) {
+      return enabled;
+    }
+  }
+
+  /// 申请通知权限。
+  ///
+  /// Android 13 起，常驻通知需要 `POST_NOTIFICATIONS` 权限才显示在通知栏。
+  /// 没给也不影响前台服务运行，只是不显示那条提示——用户会以为「开了没反应」，
+  /// 所以这里主动要一次。
+  static Future<bool> requestNotificationPermission() async {
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'requestNotificationPermission',
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// 标记某条通知已被用户手动补记。
   static Future<bool> markRecorded(int timestamp) async {
@@ -344,6 +472,37 @@ class ListenerDiagnosticsService {
       // iOS / 桌面端没有这些页面，静默忽略。
     }
   }
+}
+
+/// 「后台常驻监听」的现状。
+///
+/// 三个字段分别回答三个问题：
+/// - 开关开没开（用户自己关的就别自动拉起来了）；
+/// - 服务在不在跑（进程被清掉了会掉）；
+/// - 通知权限给了没（没给的话常驻通知用户看不见，会以为没生效）。
+class BackgroundMonitoringStatus {
+  /// 用户有没有开启「后台常驻监听」。
+  final bool enabled;
+
+  /// 常驻前台服务现在是不是真的在跑。
+  final bool running;
+
+  /// 通知权限是否已授予（Android 13 以下恒为 true）。
+  final bool notificationPermissionGranted;
+
+  const BackgroundMonitoringStatus({
+    required this.enabled,
+    required this.running,
+    required this.notificationPermissionGranted,
+  });
+
+  factory BackgroundMonitoringStatus.fromMap(Map<dynamic, dynamic> map) =>
+      BackgroundMonitoringStatus(
+        enabled: (map['enabled'] as bool?) ?? true,
+        running: (map['running'] as bool?) ?? false,
+        notificationPermissionGranted:
+            (map['notificationPermissionGranted'] as bool?) ?? true,
+      );
 }
 
 /// 「重新连接监听服务」的结果。

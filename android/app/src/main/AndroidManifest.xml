@@ -2,6 +2,12 @@
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"/>
     <!-- 开机后重新排上保活闹钟：重启后系统不一定会重新绑定监听服务。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- 后台常驻前台服务：进程优先级更高，不容易被系统回收。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Android 14 起，前台服务必须声明具体类型；持续监听通知属于 specialUse。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <!-- Android 13 起，常驻通知需要这个权限才能显示在通知栏。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="Remember 记账"
@@ -33,6 +39,26 @@
                 <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
         </service>
+
+        <!--
+            后台常驻前台服务：让进程在被清理后还能被系统拉回来。
+            这是「退到后台 / 被清理之后依旧能监听」的主力手段，
+            START_STICKY 保证进程被回收后系统会重新启动它。
+        -->
+        <service
+            android:name=".ListenerForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持续监听支付通知以实现后台自动记账"/>
+        </service>
+
+        <!-- 周期性的看门狗任务：进程被划掉后由系统重新调度，跨重启保留。 -->
+        <service
+            android:name=".ListenerWatchdogJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"/>
 
         <!--
             保活闹钟：每 15 分钟把进程拉起来请求系统重新绑定监听服务。

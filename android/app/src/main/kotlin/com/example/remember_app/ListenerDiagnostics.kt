@@ -28,6 +28,14 @@ object ListenerDiagnostics {
     private const val KEY_RECONNECT_OK = "lastReconnectOk"
     private const val KEY_RECONNECT_STAGE = "lastReconnectStage"
     private const val KEY_RECONNECT_MESSAGE = "lastReconnectMessage"
+    private const val KEY_BACKGROUND_MONITORING = "backgroundMonitoring"
+    private const val KEY_LAST_ESCALATE_AT = "lastEscalateAt"
+    private const val KEY_LAST_ESCALATE_OK = "lastEscalateOk"
+    private const val KEY_AUTO_REPAIR_AT = "autoRepairAt"
+    private const val KEY_AUTO_REPAIR_RESULT = "autoRepairResult"
+    private const val KEY_AUTO_REPAIR_MESSAGE = "autoRepairMessage"
+    private const val KEY_LAST_KILL_AT = "lastKillAt"
+    private const val KEY_LAST_KILL_REASON = "lastKillReason"
 
     /**
      * 「收到过通知」这个存活信号的写入间隔：1 分钟。
@@ -109,6 +117,60 @@ object ListenerDiagnostics {
             ?.putBoolean(KEY_RECONNECT_OK, ok)
             ?.putString(KEY_RECONNECT_STAGE, stage)
             ?.putString(KEY_RECONNECT_MESSAGE, message)
+            ?.apply()
+    }
+
+    /**
+     * 记录一次「自动修复」的尝试。
+     *
+     * 自动保活不是黑盒：用户反馈「监听又没了」时，得能回答
+     * 「App 自己试过没有、试了几次、哪一步没成」。
+     *
+     * @param result alive / rebind / escalated / escalate_failed / unauthorized
+     */
+    fun recordAutoRepair(context: Context, result: String, message: String) {
+        prefs(context)?.edit()
+            ?.putLong(KEY_AUTO_REPAIR_AT, System.currentTimeMillis())
+            ?.putString(KEY_AUTO_REPAIR_RESULT, result)
+            ?.putString(KEY_AUTO_REPAIR_MESSAGE, message)
+            ?.apply()
+    }
+
+    /**
+     * 记录一次「重置监听组件」这种重手段。
+     *
+     * 单独记一条，是因为它有副作用（系统可能临时拉黑这个监听器），
+     * 需要能查「上一次自动这么做是什么时候、成没成功」。
+     */
+    fun recordEscalation(context: Context, ok: Boolean) {
+        prefs(context)?.edit()
+            ?.putLong(KEY_LAST_ESCALATE_AT, System.currentTimeMillis())
+            ?.putBoolean(KEY_LAST_ESCALATE_OK, ok)
+            ?.apply()
+    }
+
+    /** 记录进程最后一次是怎么没的。 */
+    fun recordKill(context: Context, timestamp: Long, reason: String) {
+        prefs(context)?.edit()
+            ?.putLong(KEY_LAST_KILL_AT, timestamp)
+            ?.putString(KEY_LAST_KILL_REASON, reason)
+            ?.apply()
+    }
+
+    /**
+     * 用户要不要「后台常驻监听」。
+     *
+     * 默认开启——这个 App 的核心价值就是后台自动记账，
+     * 关掉常驻服务就等于把它关掉了。留这个开关是因为
+     * 常驻通知会占一条通知栏，有人不喜欢。
+     */
+    fun isBackgroundMonitoringEnabled(context: Context): Boolean =
+        prefs(context)?.getBoolean(KEY_BACKGROUND_MONITORING, true) ?: true
+
+    /** 设置「后台常驻监听」开关。 */
+    fun setBackgroundMonitoring(context: Context, enabled: Boolean) {
+        prefs(context)?.edit()
+            ?.putBoolean(KEY_BACKGROUND_MONITORING, enabled)
             ?.apply()
     }
 
@@ -206,6 +268,15 @@ object ListenerDiagnostics {
             "lastReconnectOk" to (p?.getBoolean(KEY_RECONNECT_OK, false) ?: false),
             "lastReconnectStage" to (p?.getString(KEY_RECONNECT_STAGE, "") ?: ""),
             "lastReconnectMessage" to (p?.getString(KEY_RECONNECT_MESSAGE, "") ?: ""),
+            "backgroundMonitoring" to (p?.getBoolean(KEY_BACKGROUND_MONITORING, true) ?: true),
+            "foregroundServiceRunning" to ListenerForegroundService.isRunning(context),
+            "lastEscalateAt" to (p?.getLong(KEY_LAST_ESCALATE_AT, 0L) ?: 0L),
+            "lastEscalateOk" to (p?.getBoolean(KEY_LAST_ESCALATE_OK, false) ?: false),
+            "autoRepairAt" to (p?.getLong(KEY_AUTO_REPAIR_AT, 0L) ?: 0L),
+            "autoRepairResult" to (p?.getString(KEY_AUTO_REPAIR_RESULT, "") ?: ""),
+            "autoRepairMessage" to (p?.getString(KEY_AUTO_REPAIR_MESSAGE, "") ?: ""),
+            "lastKillAt" to (p?.getLong(KEY_LAST_KILL_AT, 0L) ?: 0L),
+            "lastKillReason" to (p?.getString(KEY_LAST_KILL_REASON, "") ?: ""),
             "recentNotifications" to notifs
         )
     }

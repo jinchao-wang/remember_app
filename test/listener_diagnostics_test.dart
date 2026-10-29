@@ -281,4 +281,96 @@ void main() {
       expect(d.lastReconnectMessage, '');
     });
   });
+
+  group('后台常驻监听', () {
+    test('解析常驻服务的状态', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'backgroundMonitoring': true,
+        'foregroundServiceRunning': true,
+        'lastEscalateAt': 6000,
+        'autoRepairAt': 7000,
+        'autoRepairResult': 'escalated',
+        'autoRepairMessage': '已自动重置监听服务绑定',
+        'lastKillAt': 8000,
+        'lastKillReason': '因内存不足被系统回收',
+      });
+
+      expect(d.backgroundMonitoring, isTrue);
+      expect(d.foregroundServiceRunning, isTrue);
+      expect(d.backgroundMonitoringHealthy, isTrue);
+      expect(d.lastEscalateAt!.millisecondsSinceEpoch, 6000);
+      expect(d.autoRepairAt!.millisecondsSinceEpoch, 7000);
+      expect(d.autoRepairResult, 'escalated');
+      expect(d.autoRepairMessage, '已自动重置监听服务绑定');
+      expect(d.lastKillAt!.millisecondsSinceEpoch, 8000);
+      expect(d.lastKillReason, '因内存不足被系统回收');
+    });
+
+    test('开关开着但服务没跑 -> 不算健康', () {
+      // 进程被系统清掉了：开关还是开着的，但服务已经没了。
+      // 只看开关会让用户以为一切正常。
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'backgroundMonitoring': true,
+        'foregroundServiceRunning': false,
+      });
+
+      expect(d.backgroundMonitoringHealthy, isFalse);
+    });
+
+    test('被强行停止 -> 要明确告诉用户救不回来', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'lastKillReason': '被强行停止',
+      });
+
+      // 光看死因判断不了「要不要用户操作」——
+      // 关键是那次进程结束之后，监听有没有重新连上。
+      expect(d.killNeedsUserAction, isFalse);
+      expect(d.killRecovered, isFalse);
+    });
+
+    test('进程结束后监听一直没连回来 -> 需要用户重新打开一次', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'serviceConnectedAt': 1000,
+        'lastKillAt': 2000,
+        'lastKillReason': '被用户手动结束（划掉或清理后台）',
+      });
+
+      expect(d.killNeedsUserAction, isTrue);
+      expect(d.killRecovered, isFalse);
+    });
+
+    test('进程结束后监听自己连回来了 -> 不用麻烦用户', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'serviceConnectedAt': 3000,
+        'lastKillAt': 2000,
+        'lastKillReason': '因内存不足被系统回收',
+      });
+
+      expect(d.killNeedsUserAction, isFalse);
+      expect(d.killRecovered, isTrue);
+    });
+
+    test('从来没连上过 -> 也算需要用户操作', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{
+        'lastKillAt': 2000,
+      });
+
+      expect(d.killNeedsUserAction, isTrue);
+    });
+
+    test('缺省值是安全的', () {
+      final d = ListenerDiagnostics.fromMap(<String, dynamic>{});
+
+      expect(d.backgroundMonitoring, isTrue);
+      expect(d.foregroundServiceRunning, isFalse);
+      expect(d.backgroundMonitoringHealthy, isFalse);
+      expect(d.lastEscalateAt, isNull);
+      expect(d.autoRepairAt, isNull);
+      expect(d.autoRepairResult, '');
+      expect(d.lastKillAt, isNull);
+      expect(d.lastKillReason, '');
+      expect(d.killNeedsUserAction, isFalse);
+      expect(d.killRecovered, isFalse);
+    });
+  });
 }

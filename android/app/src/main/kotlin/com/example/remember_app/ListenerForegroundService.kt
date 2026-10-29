@@ -1,0 +1,191 @@
+package com.example.remember_app
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+
+/**
+ * 后台常驻前台服务。
+ *
+ * ## 为什么需要它
+ *
+ * 通知监听服务是**由系统绑定**的，进程没了绑定也就没了。
+ * 之前 App 只有一条腿：闹钟。闹钟把进程拉起来后请求一次重新绑定，
+ * 但
+ * - 闹钟在国产 ROM 的「一键清理」下经常连闹钟本身都被清掉；
+ * - `setAndAllowWhileIdle` 在 Doze 下会被推迟；
+ * - 就算进程起来了，监听服务也未必会被系统重新绑上。
+ *
+ * 有一个**前台服务**在跑，情况完全不同：
+ *
+ * 1. **进程优先级高**，不会被系统的低内存回收第一个盯上；
+ * 2. **国产 ROM 的「清理后台」会跳过有前台服务的 App**——
+ *    用户看到的通知栏里有一条常驻通知，清助手一般不敢动它；
+ * 3. **`START_STICKY`**，进程被系统回收后，系统会把它重新拉起来；
+ * 4. 用户自己看得见「App 还活着」，不用猜。
+ *
+ * 这几条正是用户说的「把程序关了后台依旧能监听」里能做到的部分。
+ *
+ * ## 做不到的部分
+ *
+ * 用户在系统设置里点「强行停止」之后，Android 会把 App 标记为 stopped，
+ * 此时**不跑任何组件**：闹钟、后台服务、Job 全停，通知监听也不会被绑定。
+ * 这是平台级的硬限制，任何 App 都绕不过——必须让用户重新打开一次。
+ * 这件事由 [ProcessExit] 检测出来，在 App 里如实告诉用户。
+ */
+class ListenerForegroundService : Service() {
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 必须在 5 秒内调用 startForeground，否则系统会抛异常并判我们违规。
+        startForegroundCompat()
+        // START_STICKY：进程被系统回收之后，系统会重新把它拉起来。
+        // 这正是「退到后台 / 被清理之后还能继续监听」的关键。
+        return START_STICKY
+    }
+
+    private fun startForegroundCompat() {
+        val notification = buildNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14 起必须显式带上类型，否则会抛
+                // MissingForegroundServiceTypeException。
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "进入前台失败: $e")
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        return builder
+            .setContentTitle("Remember 记账正在后台监听")
+            .setContentText("支付通知会自动记进账本")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            // 常驻通知：用户不能划掉，否则就等于把保活关掉了。
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setContentIntent(
+                android.app.PendingIntent.getActivity(
+                    this,
+                    0,
+                    packageManager.getLaunchIntentForPackage(packageName),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                        android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            .build()
+    }
+
+    private fun createChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        try {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "后台监听",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "常驻通知：App 在后台持续监听支付通知并自动记账"
+                setShowBadge(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
+            nm.createNotificationChannel(channel)
+        } catch (e: Throwable) {
+            Log.w(TAG, "创建通知渠道失败: $e")
+        }
+    }
+
+    companion object {
+        private const val TAG = "FgListener"
+
+        /** 通知渠道 ID。 */
+        const val CHANNEL_ID = "remember_background_listener"
+
+        private const val NOTIFICATION_ID = 4101
+
+        /**
+         * 确保常驻服务在跑。
+         *
+         * 已经在跑就什么都不做——每次都 `startForegroundService` 会白白
+         * 触发一次 `onStartCommand`。
+         */
+        fun ensureRunning(context: Context) {
+            val appContext = context.applicationContext
+            if (!ListenerDiagnostics.isBackgroundMonitoringEnabled(appContext)) return
+            if (isRunning(appContext)) return
+            try {
+                val intent = Intent(appContext, ListenerForegroundService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                Log.i(TAG, "已请求启动后台常驻服务")
+            } catch (e: Throwable) {
+                // Android 12+ 有后台启动前台服务的限制。
+                // 起不来不是致命问题：闹钟和 Job 两条腿还在，
+                // 下次用户打开 App 或监听服务连上时会再试。
+                Log.w(TAG, "启动后台常驻服务失败（可能是后台启动限制）: $e")
+            }
+        }
+
+        /** 停掉常驻服务（用户关掉「后台常驻监听」时调用）。 */
+        fun stop(context: Context) {
+            try {
+                context.applicationContext.stopService(
+                    Intent(context.applicationContext, ListenerForegroundService::class.java)
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "停止后台常驻服务失败: $e")
+            }
+        }
+
+        /**
+         * 常驻服务现在是不是真的在跑。
+         *
+         * 用 `getRunningServices` 查真实状态，而不是靠一个内存里的标记：
+         * 标记只能说明「这个进程里曾经创建过服务」，
+         * 而服务被系统回收后进程也可能还活着。
+         */
+        fun isRunning(context: Context): Boolean {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE)
+                as? android.app.ActivityManager ?: return false
+            return try {
+                @Suppress("DEPRECATION")
+                am.getRunningServices(Int.MAX_VALUE).any {
+                    it.service.className == ListenerForegroundService::class.java.name
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "查询常驻服务状态失败: $e")
+                false
+            }
+        }
+    }
+}

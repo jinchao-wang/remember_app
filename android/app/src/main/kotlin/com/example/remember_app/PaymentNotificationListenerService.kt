@@ -121,6 +121,11 @@ class PaymentNotificationListenerService : NotificationListenerService() {
         // 连上了就（重新）排上保活闹钟。
         // 进程被杀、用户强制停止、系统重启之后，闹钟才是我们能回来的唯一途径。
         ListenerKeepAlive.schedule(applicationContext)
+        // 常驻前台服务：进程优先级更高，国产 ROM 的清理后台一般会跳过它。
+        // 这时候系统正绑着我们，是允许启动前台服务的场景之一。
+        ListenerForegroundService.ensureRunning(applicationContext)
+        // Job 跨重启保留，闹钟会被系统清掉，两者都要排。
+        ListenerWatchdogJob.schedule(applicationContext)
         Log.i(TAG, "通知监听已连接")
     }
 
@@ -136,6 +141,11 @@ class PaymentNotificationListenerService : NotificationListenerService() {
     override fun onDestroy() {
         // 服务被销毁说明进程要没了（或系统要收它），留个痕迹。
         ListenerDiagnostics.recordDisconnected(applicationContext)
+        // 顺手记一下进程是怎么没的：低内存回收是我们能自己救回来的，
+        // 「强行停止」则救不回来，得告诉用户。
+        ProcessExit.lastExit(applicationContext)?.let { record ->
+            ListenerDiagnostics.recordKill(applicationContext, record.timestamp, record.describe())
+        }
         Log.w(TAG, "通知监听服务被销毁")
         super.onDestroy()
     }

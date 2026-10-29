@@ -18,6 +18,9 @@ class MainActivity : FlutterActivity() {
 
     private var eventSink: EventChannel.EventSink? = null
 
+    /** 通知权限申请的异步结果，等用户在系统弹窗上选择后再回传。 */
+    private var pendingPermissionResult: MethodChannel.Result? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         PaymentEvents.init(applicationContext)
@@ -89,6 +92,26 @@ class MainActivity : FlutterActivity() {
                     openAutoStartSettings()
                     result.success(true)
                 }
+                // 「后台常驻监听」开关。
+                "setBackgroundMonitoring" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    ListenerDiagnostics.setBackgroundMonitoring(this, enabled)
+                    if (enabled) {
+                        ListenerForegroundService.ensureRunning(this)
+                    } else {
+                        ListenerForegroundService.stop(this)
+                    }
+                    result.success(enabled)
+                }
+                // 后台常驻监听的现状：开关开没开、服务在不在跑、通知权限给了没。
+                "getBackgroundMonitoring" -> {
+                    result.success(backgroundMonitoringStatus())
+                }
+                // Android 13+ 要显示常驻通知需要 POST_NOTIFICATIONS 权限。
+                // 没有它前台服务照样能跑，只是通知栏里看不见。
+                "requestNotificationPermission" -> {
+                    requestNotificationPermission(result)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -123,13 +146,16 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 回到前台时：排上保活闹钟，并顺手请求一次重新绑定。
+        // 回到前台时：排上保活闹钟 + Job，并顺手检查一次监听服务。
         //
         // 用户打开 App 就说明进程刚起来，系统这时通常会重新绑定监听服务；
-        // 主动请求一次可以让「打开 App 就恢复正常」这件事立刻发生，
+        // 主动检查可以让「打开 App 就恢复正常」这件事立刻发生，
         // 而不是等下一次闹钟。
         ListenerKeepAlive.schedule(applicationContext)
-        ListenerKeepAlive.rebind(applicationContext)
+        ListenerWatchdogJob.schedule(applicationContext)
+        // 用户可见的前台，启动前台服务没有任何限制。
+        ListenerForegroundService.ensureRunning(applicationContext)
+        ListenerWatchdog.checkAndRepair(applicationContext, "app_foreground")
     }
 
     override fun onDestroy() {
@@ -253,6 +279,72 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * 后台常驻监听的现状。
+     *
+     * 三个字段缺一不可：
+     * - 开关开没开（用户自己关的就别再自动拉起来了）；
+     * - 服务在不在跑（进程被清掉了会掉）；
+     * - 通知权限给了没（没给的话常驻通知用户看不见，
+     *   会以为「开了没反应」）。
+     */
+    private fun backgroundMonitoringStatus(): Map<String, Any?> {
+        return mapOf(
+            "enabled" to ListenerDiagnostics.isBackgroundMonitoringEnabled(this),
+            "running" to ListenerForegroundService.isRunning(this),
+            "notificationPermissionGranted" to hasNotificationPermission()
+        )
+    }
+
+    /** Android 13+ 的 POST_NOTIFICATIONS 权限是否已授予。 */
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * 申请通知权限。
+     *
+     * Android 13 以下没有这个权限，直接告诉上层「不用申请」。
+     * 结果通过 [pendingPermissionResult] 异步回传——
+     * 用户在系统弹窗上点选择是异步的，不能在这里就返回。
+     */
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(true)
+            return
+        }
+        if (hasNotificationPermission()) {
+            result.success(true)
+            return
+        }
+        pendingPermissionResult = result
+        try {
+            requestPermissions(
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                REQ_POST_NOTIFICATIONS
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "申请通知权限失败: $e")
+            pendingPermissionResult = null
+            result.success(false)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_POST_NOTIFICATIONS) return
+        val granted = grantResults.isNotEmpty() &&
+            grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
+        pendingPermissionResult?.success(granted)
+        pendingPermissionResult = null
+    }
+
     /** 应用详情页：国产 ROM 的「自启动」「电池策略」入口都在这里。 */
     private fun openAppSettings() {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -328,5 +420,8 @@ class MainActivity : FlutterActivity() {
 
         /** 等系统回应「重新绑定」的最长时间。 */
         private const val REBIND_WAIT_MS = 6000L
+
+        /** 申请通知权限的 requestCode。 */
+        private const val REQ_POST_NOTIFICATIONS = 4103
     }
 }
