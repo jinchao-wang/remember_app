@@ -36,6 +36,7 @@ object ListenerDiagnostics {
     private const val KEY_AUTO_REPAIR_MESSAGE = "autoRepairMessage"
     private const val KEY_LAST_KILL_AT = "lastKillAt"
     private const val KEY_LAST_KILL_REASON = "lastKillReason"
+    private const val KEY_LAST_CRASH = "lastCrash"
 
     /**
      * 「收到过通知」这个存活信号的写入间隔：1 分钟。
@@ -158,6 +159,25 @@ object ListenerDiagnostics {
     }
 
     /**
+     * 记录一次崩溃。
+     *
+     * 用户只会说「App 打不开了」，光凭这句话是查不出原因的——
+     * 得把崩溃时的异常记下来，下次打开 App 时显示给他看。
+     *
+     * 用 [android.content.SharedPreferences.Editor.commit] 而不是 apply：
+     * 崩溃时进程马上就要死，apply 的异步写盘可能来不及落盘。
+     */
+    fun recordCrash(context: Context, message: String) {
+        try {
+            prefs(context)?.edit()
+                ?.putString(KEY_LAST_CRASH, message)
+                ?.commit()
+        } catch (e: Throwable) {
+            // 记不下来就算了，不能因为记录崩溃又崩一次。
+        }
+    }
+
+    /**
      * 用户要不要「后台常驻监听」。
      *
      * 默认开启——这个 App 的核心价值就是后台自动记账，
@@ -277,6 +297,7 @@ object ListenerDiagnostics {
             "autoRepairMessage" to (p?.getString(KEY_AUTO_REPAIR_MESSAGE, "") ?: ""),
             "lastKillAt" to (p?.getLong(KEY_LAST_KILL_AT, 0L) ?: 0L),
             "lastKillReason" to (p?.getString(KEY_LAST_KILL_REASON, "") ?: ""),
+            "lastCrash" to (p?.getString(KEY_LAST_CRASH, "") ?: ""),
             "recentNotifications" to notifs
         )
     }

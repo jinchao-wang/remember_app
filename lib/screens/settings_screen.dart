@@ -394,6 +394,10 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                 const SizedBox(height: 10),
                 _killNotRecoveredWarning(),
               ],
+              if (diag.lastCrash.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _crashWarning(diag.lastCrash),
+              ],
               const SizedBox(height: 12),
               _buildReconnectRow(),
               _buildBackgroundMonitoringRow(),
@@ -479,6 +483,11 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
                 : '${_timeAgo(diag.lastKillAt)} · ${diag.lastKillReason}'
                     '${diag.killRecovered ? ' · 已自动恢复' : ''}',
           ),
+          _diagRow(
+            Icons.bug_report,
+            '上次崩溃',
+            diag.lastCrash.isEmpty ? '无记录' : diag.lastCrash,
+          ),
           const SizedBox(height: 12),
           _buildRomHints(),
         ],
@@ -544,6 +553,26 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
             '上次进程在 ${_timeAgo(d?.lastKillAt)} 结束'
             '${d?.lastKillReason == null || d!.lastKillReason.isEmpty ? '' : '（${d.lastKillReason}）'}，'
             '之后监听没能重新连上。请重新打开一次 App 恢复。',
+            style: TextStyle(fontSize: 12, color: context.scheme.error),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 「上次崩过」的告警。
+  ///
+  /// 用户说「App 打不开」时，光看现象分不出是闪退还是白屏。
+  /// 这里把崩溃时的异常原样摆出来，下次再出问题时能直接定位。
+  Widget _crashWarning(String crash) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.bug_report, size: 16, color: context.scheme.error),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '上次崩溃：$crash',
             style: TextStyle(fontSize: 12, color: context.scheme.error),
           ),
         ),

@@ -46,20 +46,58 @@ class ListenerForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
+        // 这个服务和 App 跑在**同一个进程**里。
+        // 它里面任何未捕获的异常都会把整个 App 一起带走——
+        // 表现就是「点开图标闪一下就没了」，用户完全看不懂。
+        //
+        // 所以这里的每个回调都自己兜住异常：常驻服务是锦上添花，
+        // 绝不能因为它把 App 搞崩。
+        try {
+            createChannel()
+        } catch (e: Throwable) {
+            Log.w(TAG, "创建通知渠道失败: $e")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 必须在 5 秒内调用 startForeground，否则系统会抛异常并判我们违规。
-        startForegroundCompat()
+        if (!startForegroundCompat()) {
+            // 进不去前台就立刻把自己停掉。
+            //
+            // 这一步很关键：**不停止的话，系统会在 5 秒后抛
+            // ForegroundServiceDidNotStartInTimeException，那是进程级崩溃**——
+            // 表现就是「App 一打开就闪退」，而且是在后台触发的，用户完全看不懂。
+            //
+            // 什么情况下会进不去前台？Android 12+ 限制后台启动前台服务：
+            // 闹钟/Job 把进程拉起来时，服务可能根本不被允许进前台。
+            // 这种情况下放弃常驻服务即可——闹钟和 Job 两条腿还在，
+            // 用户下次打开 App 时会再试。
+            Log.w(TAG, "无法进入前台，停掉常驻服务")
+            try {
+                stopSelf()
+            } catch (e: Throwable) {
+                Log.w(TAG, "停止服务失败: $e")
+            }
+            return START_NOT_STICKY
+        }
         // START_STICKY：进程被系统回收之后，系统会重新把它拉起来。
         // 这正是「退到后台 / 被清理之后还能继续监听」的关键。
         return START_STICKY
     }
 
-    private fun startForegroundCompat() {
-        val notification = buildNotification()
-        try {
+    /**
+     * 进入前台。
+     *
+     * @return 是否成功。失败时**必须**停掉服务，否则系统会因超时而崩掉进程。
+     */
+    private fun startForegroundCompat(): Boolean {
+        // buildNotification 也要放进 try 里：
+        // 它会去拿 App 的启动 Intent（getLaunchIntentForPackage），
+        // 万一拿不到，PendingIntent 构造会抛异常——
+        // 那时候如果没接住，异常会一路冒到 onStartCommand 外面，
+        // **把整个 App 进程带崩**。
+        return try {
+            val notification = buildNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Android 14 起必须显式带上类型，否则会抛
                 // MissingForegroundServiceTypeException。
@@ -71,8 +109,10 @@ class ListenerForegroundService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            true
         } catch (e: Throwable) {
             Log.w(TAG, "进入前台失败: $e")
+            false
         }
     }
 
@@ -83,23 +123,35 @@ class ListenerForegroundService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
-        return builder
+        builder
             .setContentTitle("Remember 记账正在后台监听")
             .setContentText("支付通知会自动记进账本")
             .setSmallIcon(R.mipmap.ic_launcher)
             // 常驻通知：用户不能划掉，否则就等于把保活关掉了。
             .setOngoing(true)
             .setShowWhen(false)
-            .setContentIntent(
-                android.app.PendingIntent.getActivity(
-                    this,
-                    0,
-                    packageManager.getLaunchIntentForPackage(packageName),
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
-                        android.app.PendingIntent.FLAG_IMMUTABLE
+
+        // 点通知回到 App。拿不到启动 Intent 就不设这一项——
+        // 硬塞一个 null 给 PendingIntent.getActivity 会抛异常，
+        // 那时候整个 App 都会跟着崩。
+        try {
+            val launch = packageManager.getLaunchIntentForPackage(packageName)
+            if (launch != null) {
+                builder.setContentIntent(
+                    android.app.PendingIntent.getActivity(
+                        this,
+                        0,
+                        launch,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                            android.app.PendingIntent.FLAG_IMMUTABLE
+                    )
                 )
-            )
-            .build()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "设置通知点击跳转失败: $e")
+        }
+
+        return builder.build()
     }
 
     private fun createChannel() {

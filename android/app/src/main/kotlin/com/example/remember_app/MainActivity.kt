@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         PaymentEvents.init(applicationContext)
+        installCrashRecorder()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -276,6 +277,28 @@ class MainActivity : FlutterActivity() {
             startActivity(intent)
         } else {
             openAppSettings()
+        }
+    }
+
+    /**
+     * 装一个全局崩溃记录器。
+     *
+     * 用户反馈「App 打不开了」时，光看现象是查不出原因的——
+     * 闪退、白屏、卡在启动页，看上去都一样。
+     * 这里把崩溃时的异常记到本地，下次打开 App 时显示在「诊断详情」里。
+     */
+    private fun installCrashRecorder() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val message = "${throwable.javaClass.simpleName}: ${throwable.message ?: "(无消息)"}"
+                Log.e(TAG, "App 崩溃: $message", throwable)
+                ListenerDiagnostics.recordCrash(applicationContext, message)
+            } catch (e: Throwable) {
+                // 记崩溃失败也不能再崩一次。
+            }
+            // 交给系统原来的处理流程（弹崩溃框、结束进程）。
+            previous?.uncaughtException(thread, throwable)
         }
     }
 

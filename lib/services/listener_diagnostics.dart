@@ -168,6 +168,13 @@ class ListenerDiagnostics {
   /// 进程最后一次被结束的原因（原生层给的中文说明）。
   final String lastKillReason;
 
+  /// 上一次崩溃的异常摘要（原生层记录的）。
+  ///
+  /// 用户只会说「App 打不开了」，光凭这句话查不出原因——
+  /// 闪退、白屏、卡在启动页，看上去一模一样。
+  /// 这里把崩溃时的异常记下来，下次打开就能看到。
+  final String lastCrash;
+
   const ListenerDiagnostics({
     required this.listenerEnabled,
     this.serviceConnectedAt,
@@ -191,6 +198,7 @@ class ListenerDiagnostics {
     this.autoRepairMessage = '',
     this.lastKillAt,
     this.lastKillReason = '',
+    this.lastCrash = '',
   });
 
   /// 监听服务是否曾经被系统绑定过。
@@ -328,6 +336,7 @@ class ListenerDiagnostics {
       autoRepairMessage: (map['autoRepairMessage'] as String?) ?? '',
       lastKillAt: ts(map['lastKillAt']),
       lastKillReason: (map['lastKillReason'] as String?) ?? '',
+      lastCrash: (map['lastCrash'] as String?) ?? '',
     );
   }
 }
