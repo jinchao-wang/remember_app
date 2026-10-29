@@ -65,16 +65,18 @@ class ListenerForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 整个方法体兜住异常：这里是系统回调，抛出去就是进程猝死。
         try {
-            // 必须在 5 秒内调用 startForeground，否则系统会抛异常并判我们违规。
+            // 进前台：必须尽早调用 startForeground。
+            //
+            // 注意这里**没有**「5 秒内不调用就会被系统判超时」的压力了——
+            // 那是因为以前用的是 startForegroundService()，系统会挂看门狗。
+            // 现在改用普通 startService()（理由见 [ensureRunning]），
+            // 系统不挂看门狗，进不去前台只是少一条常驻通知，不会猝死。
             if (!startForegroundCompat()) {
-                // 进不去前台就立刻把自己停掉。
+                // 进不去前台就把自己停掉：留着也是个会被系统回收的后台服务，
+                // 反而像是「App 还活着」却没干活。
                 //
-                // 这一步很关键：**不停止的话，系统会在 5 秒后抛
-                // ForegroundServiceDidNotStartInTimeException，那是进程级崩溃**——
-                // 表现就是「App 一打开就闪退」，而且是在后台触发的，用户完全看不懂。
-                //
-                // 什么情况下会进不去前台？Android 12+ 限制后台启动前台服务：
-                // 闹钟/Job 把进程拉起来时，服务可能根本不被允许进前台。
+                // 什么情况下会进不去前台？Android 8+ 限制在后台启动服务：
+                // 闹钟/Job 把进程拉起来时，服务可能根本不被允许启动。
                 // 这种情况下放弃常驻服务即可——闹钟和 Job 两条腿还在，
                 // 用户下次打开 App 时会再试。
                 Log.w(TAG, "无法进入前台，停掉常驻服务")
@@ -103,7 +105,8 @@ class ListenerForegroundService : Service() {
     /**
      * 进入前台。
      *
-     * @return 是否成功。失败时**必须**停掉服务，否则系统会因超时而崩掉进程。
+     * @return 是否成功。失败时服务会退化成普通后台服务（不会有通知、
+     *   优先级也低），但**不会**让进程猝死。
      */
     private fun startForegroundCompat(): Boolean {
         // buildNotification 也要放进 try 里：
