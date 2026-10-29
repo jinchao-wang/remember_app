@@ -13,6 +13,12 @@ class PaymentNotificationListenerService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        // 崩溃记录器。
+        //
+        // 这个服务经常是**系统为绑定监听器而拉起进程**时第一个跑起来的组件
+        // （此时还没有 Activity），所以必须在这里装一次，
+        // 否则这种「用户没打开 App、App 自己崩了」的情况就抓不到了。
+        CrashRecorder.install(applicationContext)
         // 必须在任何 post() 之前初始化，否则缓存无处可写。
         PaymentEvents.init(applicationContext)
     }

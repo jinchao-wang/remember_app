@@ -14,7 +14,6 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
-import kotlin.system.exitProcess
 
 class MainActivity : FlutterActivity() {
 
@@ -23,15 +22,12 @@ class MainActivity : FlutterActivity() {
     /** 通知权限申请的异步结果，等用户在系统弹窗上选择后再回传。 */
     private var pendingPermissionResult: MethodChannel.Result? = null
 
-    /** 崩溃记录器是否已经装好了。 */
-    private var crashRecorderInstalled = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         // 必须在 super.onCreate 之前装崩溃记录器：
         // Flutter 引擎是在 super.onCreate() 里创建的，
         // 引擎初始化阶段的崩溃如果没装记录器就抓不到了——
         // 而那正好是「App 点开就没了」最常见的死法。
-        installCrashRecorder()
+        CrashRecorder.install(applicationContext)
         super.onCreate(savedInstanceState)
     }
 
@@ -42,7 +38,7 @@ class MainActivity : FlutterActivity() {
         } catch (e: Throwable) {
             Log.w(TAG, "初始化事件总线失败: $e")
         }
-        installCrashRecorder()
+        CrashRecorder.install(applicationContext)
 
         try {
             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
@@ -197,7 +193,8 @@ class MainActivity : FlutterActivity() {
         // 都不该让用户「打不开 App」。这里抛出 = 崩溃 = 白屏闪退。
         runSafely("排保活闹钟") { ListenerKeepAlive.schedule(applicationContext) }
         runSafely("排看门狗任务") { ListenerWatchdogJob.schedule(applicationContext) }
-        // 用户可见的前台，启动前台服务没有任何限制。
+        // 常驻前台服务：用普通 startService 启动（见 ListenerForegroundService 的注释），
+        // 由服务自己在 onStartCommand 里进前台，这样不会有「5 秒没进前台就猝死」的风险。
         runSafely("启动常驻服务") { ListenerForegroundService.ensureRunning(applicationContext) }
         runSafely("看门狗检查") {
             ListenerWatchdog.checkAndRepair(applicationContext, "app_foreground")
@@ -332,54 +329,6 @@ class MainActivity : FlutterActivity() {
         } else {
             openAppSettings()
         }
-    }
-
-    /**
-     * 装一个全局崩溃记录器。
-     *
-     * 用户反馈「App 打不开了」时，光看现象是查不出原因的——
-     * 闪退、白屏、卡在启动页，看上去都一样。
-     * 这里把崩溃时的异常记到本地，下次打开 App 时显示在「诊断详情」里。
-     */
-    private fun installCrashRecorder() {
-        if (crashRecorderInstalled) return
-        crashRecorderInstalled = true
-        val previous = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            try {
-                val message = describeCrash(throwable)
-                Log.e(TAG, "App 崩溃: $message", throwable)
-                ListenerDiagnostics.recordCrash(applicationContext, message)
-            } catch (e: Throwable) {
-                // 记崩溃失败也不能再崩一次。
-            }
-            // 交给系统原来的处理流程（弹崩溃框、结束进程）。
-            if (previous != null) {
-                previous.uncaughtException(thread, throwable)
-            } else {
-                // 没有默认处理器的话，系统不会来收尾，
-                // 进程会半死不活地僵在原地——那正是「App 打不开」最难缠的死法。
-                // 这里自己收干净，至少让用户下次能重新打开。
-                android.os.Process.killProcess(android.os.Process.myPid())
-                exitProcess(10)
-            }
-        }
-    }
-
-    /**
-     * 把异常压成一行能存进 SharedPreferences 的文字。
-     *
-     * 只带最上面几帧：完整堆栈可能几百行，塞不下，
-     * 而且用户看得懂的是「在哪儿炸的」。
-     */
-    private fun describeCrash(throwable: Throwable): String {
-        val sb = StringBuilder()
-        sb.append(throwable.javaClass.simpleName)
-        throwable.message?.let { sb.append(": ").append(it) }
-        throwable.stackTrace.take(6).forEach { frame ->
-            sb.append("\n  at ").append(frame)
-        }
-        return sb.toString()
     }
 
     /**

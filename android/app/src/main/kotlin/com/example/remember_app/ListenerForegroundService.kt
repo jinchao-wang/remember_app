@@ -46,6 +46,9 @@ class ListenerForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // 崩溃记录器：后台被杀时进程里可能根本没有 Activity，
+        // 在这里装一次才能抓到那些崩溃。
+        CrashRecorder.install(applicationContext)
         // 这个服务和 App 跑在**同一个进程**里。
         // 它里面任何未捕获的异常都会把整个 App 一起带走——
         // 表现就是「点开图标闪一下就没了」，用户完全看不懂。
@@ -129,12 +132,20 @@ class ListenerForegroundService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
+        // 构造通知的任何一步失败都不能连累「进入前台」这件事：
+        // 进不去前台 = 系统 5 秒后判我们超时 = 进程猝死。
+        // 所以这里失败了就退回到一个最朴素的通知，保证 startForeground 拿得到东西。
+        return try {
+            buildRichNotification()
+        } catch (e: Throwable) {
+            Log.w(TAG, "构造常驻通知失败，退回最小通知: $e")
+            buildMinimalNotification()
         }
+    }
+
+    /** 完整版常驻通知。 */
+    private fun buildRichNotification(): Notification {
+        val builder = newBuilder()
         builder
             .setContentTitle("Remember 记账正在后台监听")
             .setContentText("支付通知会自动记进账本")
@@ -164,6 +175,25 @@ class ListenerForegroundService : Service() {
         }
 
         return builder.build()
+    }
+
+    /** 兜底用的最小通知：只要能进前台就行。 */
+    private fun buildMinimalNotification(): Notification {
+        val builder = newBuilder()
+        builder
+            .setContentTitle("Remember 记账")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setOngoing(true)
+        return builder.build()
+    }
+
+    private fun newBuilder(): Notification.Builder {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
     }
 
     private fun createChannel() {
@@ -197,25 +227,50 @@ class ListenerForegroundService : Service() {
         /**
          * 确保常驻服务在跑。
          *
-         * 已经在跑就什么都不做——每次都 `startForegroundService` 会白白
+         * 已经在跑就什么都不做——每次都启动服务都会白白
          * 触发一次 `onStartCommand`。
+         *
+         * ## 这里为什么用普通 `startService()` 而不是 `startForegroundService()`
+         *
+         * `startForegroundService()` 不是普通的启动服务：它会在系统里
+         * 挂一个**5~10 秒的看门狗**，要求 App 在这期间调用一次
+         * `Service.startForeground()`。超时没调用，系统就抛
+         * `ForegroundServiceDidNotStartInTimeException`，
+         * **把我们整个进程打死**。
+         *
+         * 这个异常是系统发起的，App 里 catch 不住；
+         * 自己调 `stopSelf()` 也撤不掉那个看门狗。
+         *
+         * 更要命的是它会形成**崩溃循环**：
+         * 一旦出过一次这种崩溃，系统会留下「start requested」的挂起状态，
+         * 下一次 `startForegroundService()` 会在**几十毫秒内**被系统判定超时，
+         * 再次把进程打死。用户看到的正是「App 直接打不开了」——
+         * 点开闪一下就没了，怎么重开都没用。
+         * （这个崩溃真刀真枪发生过：崩溃记录里抓到的就是
+         *  `ForegroundServiceDidNotStartInTimeException`。）
+         *
+         * 普通 `startService()` **不挂那个看门狗**：
+         * 即便随后 `startForeground()` 被系统拒绝（Android 12+ 的后台启动限制），
+         * 也只是这次没进前台，**绝不会猝死**。
+         *
+         * 前台服务照常建立：`onStartCommand` 里第一件事就是 `startForeground()`，
+         * 之后靠 `START_STICKY` 续命。
          */
         fun ensureRunning(context: Context) {
             val appContext = context.applicationContext
             if (!ListenerDiagnostics.isBackgroundMonitoringEnabled(appContext)) return
             if (isRunning(appContext)) return
+
             try {
                 val intent = Intent(appContext, ListenerForegroundService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appContext.startForegroundService(intent)
-                } else {
-                    appContext.startService(intent)
-                }
+                // 刻意不用 startForegroundService：理由见上面的注释。
+                appContext.startService(intent)
                 Log.i(TAG, "已请求启动后台常驻服务")
             } catch (e: Throwable) {
-                // Android 12+ 有后台启动前台服务的限制。
+                // Android 8+ 不允许在后台启动普通服务，
+                // 这里抛的是 IllegalStateException。
                 // 起不来不是致命问题：闹钟和 Job 两条腿还在，
-                // 下次用户打开 App 或监听服务连上时会再试。
+                // 用户下次打开 App 时会再试（那时一定在前台，能成功进前台）。
                 Log.w(TAG, "启动后台常驻服务失败（可能是后台启动限制）: $e")
             }
         }
