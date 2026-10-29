@@ -21,7 +21,13 @@ class PaymentService {
   ///
   /// 5 分钟是权衡：银行短信通常在扣款后几秒内到达，
   /// 银行 App 的推送通知一般也在一两分钟内。
-  static const Duration crossSourceWindow = Duration(minutes: 5);
+  ///
+  /// **后来放宽到 10 分钟**：银行 App 的推送经常延迟，
+  /// 用户反馈「微信那条和银行那条金额一样、时间也就差个七八分钟，
+  /// 结果还是记了两笔」。而判重条件里除了时间窗，
+  /// 现在还要求「支付平台 ↔ 银行」或者「同一家银行」——
+  /// 身份判据变强了，时间窗就可以放宽一点换回召回。
+  static const Duration crossSourceWindow = Duration(minutes: 10);
 
   /// 金额比较容差。分与厘的进位差异不该被当成两笔。
   static const double amountTolerance = 0.005;
@@ -71,7 +77,16 @@ class PaymentService {
 
   /// 判断两条记录是不是同一笔钱（跨来源场景）。
   ///
-  /// 只在「一条来自支付平台、另一条来自银行」时才算，
+  /// 来源要能配成同一笔，满足其一即可：
+  /// 1. **支付平台 ↔ 银行**（原有的规则）；
+  /// 2. **同一家银行**（新增，见 [isSamePaymentPair]）。
+  ///
+  /// 第 2 条是为了堵住原先漏掉的一类重复：
+  /// 用户装的银行 App 不在包名表里（信用卡 App、地方银行、数字银行…），
+  /// 它的通知被判成「其它」，于是「微信 + 银行 App」配不上，
+  /// 同一笔扣费被记成两笔。现在从通知正文里认出银行名，
+  /// 两边认得出同一家银行就能合并。
+  ///
   /// 其它组合一律返回 false——宁可漏合并，也不把两笔真交易并掉。
   static bool isSameCrossSourceEvent({
     required Transaction existing,
@@ -80,8 +95,12 @@ class PaymentService {
     required String eventType,
     required SourceRole existingRole,
     required SourceRole eventRole,
+    String? existingBankId,
+    String? eventBankId,
   }) {
-    if (!isCrossSourcePair(existingRole, eventRole)) return false;
+    final pairable = isCrossSourcePair(existingRole, eventRole) ||
+        (existingBankId != null && existingBankId == eventBankId);
+    if (!pairable) return false;
     if ((existing.amount - eventAmount).abs() >= amountTolerance) return false;
     // 方向必须一致：同一笔不可能既是支出又是收入。
     if (existing.type != eventType) return false;
@@ -104,7 +123,8 @@ class PaymentService {
     required PaymentEvent event,
     required DateTime eventTime,
   }) {
-    final eventRole = roleOf(packageName: event.sourceApp, content: event.content);
+    final eventIdentity =
+        identityOf(packageName: event.sourceApp, content: event.content);
     for (final existing in candidates) {
       // 同来源：系统把同一条通知重复推送了。
       if (existing.sourceApp == event.sourceApp) {
@@ -118,9 +138,9 @@ class PaymentService {
         continue;
       }
 
-      // 跨来源：只有平台 ↔ 银行这种配对才可能是同一笔。
+      // 跨来源：支付平台 ↔ 银行，或者同一家银行的两个渠道。
       if (!crossSourceEnabled) continue;
-      final existingRole = roleOf(
+      final existingIdentity = identityOf(
         packageName: existing.sourceApp,
         content: existing.note ?? '',
       );
@@ -129,8 +149,10 @@ class PaymentService {
         eventAmount: event.amount,
         eventTime: eventTime,
         eventType: event.type,
-        existingRole: existingRole,
-        eventRole: eventRole,
+        existingRole: existingIdentity.role,
+        eventRole: eventIdentity.role,
+        existingBankId: existingIdentity.bankId,
+        eventBankId: eventIdentity.bankId,
       )) {
         return existing;
       }
@@ -205,7 +227,11 @@ class PaymentService {
   /// - 两条都是自动记录（手动记的绝不动）
   /// - 用户编辑过的记录不参与合并（用户可能已经手动整理过）
   /// - 金额相同、方向相同、时间差在 [crossSourceWindow] 内
-  /// - 来源角色是平台 ↔ 银行
+  /// - 来源能配成同一笔：支付平台 ↔ 银行，**或者同一家银行**
+  ///
+  /// 最后一条用的是和入库同一套身份判据，
+  /// 所以「微信 + 认不出来的银行 App」这类新覆盖到的重复，
+  /// 历史数据也能一起清掉。
   ///
   /// @return 可以删除的重复记录 id 列表（每组重复只保留最早的一条）。
   static Future<List<int>> findCrossSourceDuplicates() async {
@@ -220,16 +246,19 @@ class PaymentService {
     final removable = <int>[];
     final kept = <Transaction>[];
     for (final t in list) {
-      final role = roleOf(packageName: t.sourceApp, content: t.note ?? '');
+      final identity = identityOf(packageName: t.sourceApp, content: t.note ?? '');
       final dup = kept.any((k) {
-        final kRole = roleOf(packageName: k.sourceApp, content: k.note ?? '');
+        final kIdentity =
+            identityOf(packageName: k.sourceApp, content: k.note ?? '');
         return isSameCrossSourceEvent(
           existing: k,
           eventAmount: t.amount,
           eventTime: t.date,
           eventType: t.type,
-          existingRole: kRole,
-          eventRole: role,
+          existingRole: kIdentity.role,
+          eventRole: identity.role,
+          existingBankId: kIdentity.bankId,
+          eventBankId: identity.bankId,
         );
       });
       if (dup) {

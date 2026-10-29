@@ -160,13 +160,13 @@ void main() {
       );
     });
 
-    test('超过跨来源窗口（6 分钟）-> 不判重', () {
+    test('超过跨来源窗口（12 分钟）-> 不判重', () {
       final wechat = autoFrom(packageName: 'com.tencent.mm', content: '微信支付 付款成功 ¥31.31');
       expect(
         cross(
           wechat,
           amount: 31.31,
-          at: base.add(const Duration(minutes: 6)),
+          at: base.add(const Duration(minutes: 12)),
           eventType: 'expense',
           existingRole: SourceRole.platform,
           eventRole: SourceRole.bank,
@@ -363,13 +363,24 @@ void main() {
       expect(dup, isNull);
     });
 
-    test('隔太久（超过 5 分钟）-> 不是重复', () {
+    test('隔太久（超过 10 分钟）-> 不是重复', () {
+      // 跨来源窗口从 5 分钟放宽到 10 分钟：
+      // 银行 App 的推送经常延迟，用户反馈过「差个七八分钟还是记了两笔」。
+      final dup = PaymentService.findDuplicate(
+        candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
+        event: event(packageName: 'com.android.mms', content: bankContent),
+        eventTime: base.add(const Duration(minutes: 12)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('差 8 分钟 -> 算同一笔（窗口放宽到 10 分钟）', () {
       final dup = PaymentService.findDuplicate(
         candidates: [record(packageName: 'com.tencent.mm', content: wechatContent)],
         event: event(packageName: 'com.android.mms', content: bankContent),
         eventTime: base.add(const Duration(minutes: 8)),
       );
-      expect(dup, isNull);
+      expect(dup, isNotNull);
     });
 
     test('方向不一致 -> 不是重复', () {
@@ -430,6 +441,158 @@ void main() {
         eventTime: base.add(const Duration(minutes: 1)),
       );
       expect(dup, isNotNull);
+    });
+
+    // ------------------------------------------- 用户反馈的「依旧重复」
+
+    test('银行 App 不在包名表里，但正文写了银行名 -> 也能判为重复', () {
+      // 这正是用户报的「微信一条、银行一条，金额一样、时间差几分钟，还是记了两笔」。
+      // 根因：信用卡 App / 地方银行 / 数字银行的包名不在那 18 家里，
+      // 它的通知被判成「其它」，于是「平台 ↔ 银行」配不上。
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.cmb.creditcard',
+            content: '招商银行 · 您尾号1234信用卡于10月20日消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.tencent.mm',
+          content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+        ),
+        eventTime: base.add(const Duration(minutes: 2)),
+      );
+      expect(dup, isNotNull);
+      expect(dup!.sourceApp, 'com.cmb.creditcard');
+    });
+
+    test('银行 App + 银行短信（同一家）-> 判为重复', () {
+      // 两边角色都是 bank，原来的「平台 ↔ 银行」配对配不上。
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc',
+            content: '工商银行 · 您尾号8888信用卡消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.android.mms',
+          content: '【工商银行】您尾号8888信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(seconds: 45)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('微信通知带银行名 + 银行短信带银行名 -> 判为重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.android.mms',
+          content: '【招商银行】您尾号1234信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(minutes: 3)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('两家不同的银行 -> 不是重复', () {
+      // 同一家银行才合并，不同银行是两笔真交易。
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc',
+            content: '工商银行 · 您尾号8888信用卡消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.android.mms',
+          content: '【招商银行】您尾号1234信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(seconds: 30)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('同一家银行但隔太久 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc',
+            content: '工商银行 · 您尾号8888信用卡消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.android.mms',
+          content: '【工商银行】您尾号8888信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(minutes: 30)),
+      );
+      expect(dup, isNull);
+    });
+  });
+
+  group('来源身份识别', () {
+    test('从正文里认出银行名', () {
+      expect(bankIdOfContent('【招商银行】您尾号8888信用卡消费31.31元'), 'cmbchina');
+      expect(bankIdOfContent('您尾号8888的建设银行储蓄卡扣款'), 'ccb');
+      expect(bankIdOfContent('中国工商银行信用卡账单'), 'icbc');
+      // 长名优先：「广东发展银行」不能被「银行」之类的短片段截胡。
+      expect(bankIdOfContent('广东发展银行通知'), 'cgb');
+      // 认不出就是 null。
+      expect(bankIdOfContent('微信支付 付款成功 ¥31.31'), isNull);
+      expect(bankIdOfContent(''), isNull);
+    });
+
+    test('平台通知即使正文有银行名，角色仍然是 platform', () {
+      final id = identityOf(
+        packageName: 'com.tencent.mm',
+        content: '你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+      );
+      expect(id.role, SourceRole.platform);
+      // 但银行名要记下来——跨来源判重要用。
+      expect(id.bankId, 'cmbchina');
+    });
+
+    test('短信里认出银行名 -> role 是 bank', () {
+      final id = identityOf(
+        packageName: 'com.android.mms',
+        content: '【招商银行】您尾号1234信用卡于10月20日消费支出人民币31.31元',
+      );
+      expect(id.role, SourceRole.bank);
+      expect(id.bankId, 'cmbchina');
+    });
+
+    test('认不出来的包名 + 正文有银行名 -> 也算银行', () {
+      final id = identityOf(
+        packageName: 'com.unknown.creditcard.app',
+        content: '招商银行 · 您尾号1234信用卡消费支出人民币31.31元',
+      );
+      expect(id.role, SourceRole.bank);
+      expect(id.bankId, 'cmbchina');
+    });
+
+    test('同一家银行的两个身份能配成同一笔', () {
+      final a = identityOf(packageName: 'com.cmb.creditcard', content: '招商银行扣款31.31');
+      final b = identityOf(packageName: 'com.android.mms', content: '【招商银行】扣款31.31');
+      expect(isSamePaymentPair(a, b), isTrue);
+    });
+
+    test('不同银行配不成同一笔', () {
+      final a = identityOf(packageName: 'com.icbc', content: '工商银行扣款');
+      final b = identityOf(packageName: 'com.android.mms', content: '【招商银行】扣款');
+      expect(isSamePaymentPair(a, b), isFalse);
+    });
+
+    test('两个陌生 App 配不成同一笔', () {
+      final a = identityOf(packageName: 'com.unknown.a', content: '扣款');
+      final b = identityOf(packageName: 'com.unknown.b', content: '扣款');
+      expect(isSamePaymentPair(a, b), isFalse);
     });
   });
 }
