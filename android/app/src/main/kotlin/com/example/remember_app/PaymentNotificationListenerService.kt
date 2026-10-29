@@ -18,6 +18,21 @@ class PaymentNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        // 这个回调对**设备上的每一条通知**都会跑，而它和 App 主界面在同一个进程里。
+        //
+        // 一旦这里抛出未捕获异常，整个进程就没了；系统随后会重新绑定监听服务，
+        // 再把那条通知重放一遍——于是变成崩溃循环：
+        // **用户点开 App，进程起来，崩掉，看起来就是「App 打不开」**。
+        //
+        // 所以这里整个兜住：一条通知解析失败，最多漏记一笔，绝不能拖垮 App。
+        try {
+            handleNotification(sbn)
+        } catch (e: Throwable) {
+            Log.w(TAG, "处理通知失败（已忽略）: $e")
+        }
+    }
+
+    private fun handleNotification(sbn: StatusBarNotification) {
         // 任何一条通知都证明服务还活着，先记一笔存活时间。
         // 这一条是「绑定到底掉没掉」最直接的判据：
         // 收到过 = 绑定是活的（问题多半在文案识别），没收到过 = 绑定真的僵死了。
@@ -117,36 +132,49 @@ class PaymentNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        ListenerDiagnostics.recordConnected(applicationContext)
-        // 连上了就（重新）排上保活闹钟。
-        // 进程被杀、用户强制停止、系统重启之后，闹钟才是我们能回来的唯一途径。
-        ListenerKeepAlive.schedule(applicationContext)
-        // 常驻前台服务：进程优先级更高，国产 ROM 的清理后台一般会跳过它。
-        // 这时候系统正绑着我们，是允许启动前台服务的场景之一。
-        ListenerForegroundService.ensureRunning(applicationContext)
-        // Job 跨重启保留，闹钟会被系统清掉，两者都要排。
-        ListenerWatchdogJob.schedule(applicationContext)
-        Log.i(TAG, "通知监听已连接")
+        try {
+            ListenerDiagnostics.recordConnected(applicationContext)
+            // 连上了就（重新）排上保活闹钟。
+            // 进程被杀、用户强制停止、系统重启之后，闹钟才是我们能回来的唯一途径。
+            ListenerKeepAlive.schedule(applicationContext)
+            // 常驻前台服务：进程优先级更高，国产 ROM 的清理后台一般会跳过它。
+            // 这时候系统正绑着我们，是允许启动前台服务的场景之一。
+            ListenerForegroundService.ensureRunning(applicationContext)
+            // Job 跨重启保留，闹钟会被系统清掉，两者都要排。
+            ListenerWatchdogJob.schedule(applicationContext)
+            Log.i(TAG, "通知监听已连接")
+        } catch (e: Throwable) {
+            // 同样不能拖垮 App：连上了但保活没排上，下次再说。
+            Log.w(TAG, "监听连接后初始化失败: $e")
+        }
     }
 
     override fun onListenerDisconnected() {
-        ListenerDiagnostics.recordDisconnected(applicationContext)
-        super.onListenerDisconnected()
-        Log.w(TAG, "通知监听已断开")
-        // 断开了立刻请求重新绑定——这是最省事、最有效的一步。
-        // 系统在部分设备上解绑之后不会自己绑回来，不主动请求就再也回不去了。
-        ListenerKeepAlive.rebind(applicationContext)
+        try {
+            ListenerDiagnostics.recordDisconnected(applicationContext)
+            super.onListenerDisconnected()
+            Log.w(TAG, "通知监听已断开")
+            // 断开了立刻请求重新绑定——这是最省事、最有效的一步。
+            // 系统在部分设备上解绑之后不会自己绑回来，不主动请求就再也回不去了。
+            ListenerKeepAlive.rebind(applicationContext)
+        } catch (e: Throwable) {
+            Log.w(TAG, "监听断开处理失败: $e")
+        }
     }
 
     override fun onDestroy() {
-        // 服务被销毁说明进程要没了（或系统要收它），留个痕迹。
-        ListenerDiagnostics.recordDisconnected(applicationContext)
-        // 顺手记一下进程是怎么没的：低内存回收是我们能自己救回来的，
-        // 「强行停止」则救不回来，得告诉用户。
-        ProcessExit.lastExit(applicationContext)?.let { record ->
-            ListenerDiagnostics.recordKill(applicationContext, record.timestamp, record.describe())
+        try {
+            // 服务被销毁说明进程要没了（或系统要收它），留个痕迹。
+            ListenerDiagnostics.recordDisconnected(applicationContext)
+            // 顺手记一下进程是怎么没的：低内存回收是我们能自己救回来的，
+            // 「强行停止」则救不回来，得告诉用户。
+            ProcessExit.lastExit(applicationContext)?.let { record ->
+                ListenerDiagnostics.recordKill(applicationContext, record.timestamp, record.describe())
+            }
+            Log.w(TAG, "通知监听服务被销毁")
+        } catch (e: Throwable) {
+            Log.w(TAG, "监听服务销毁时记录失败: $e")
         }
-        Log.w(TAG, "通知监听服务被销毁")
         super.onDestroy()
     }
 

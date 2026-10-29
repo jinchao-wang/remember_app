@@ -22,7 +22,14 @@ class KeepAliveReceiver : BroadcastReceiver() {
         Log.i(TAG, "保活闹钟触发，检查监听服务状态")
         // 交给看门狗分级处理：活着就轻量重绑，僵死了才动组件。
         // 这里不用 goAsync()，看门狗内部的动作都是短平快的系统调用。
-        ListenerWatchdog.checkAndRepair(appContext, "alarm")
+        //
+        // 兜住异常：广播接收器和 App 在同一个进程里，
+        // 这里抛出 = 整个 App 进程猝死（用户在后台收到通知时崩溃）。
+        try {
+            ListenerWatchdog.checkAndRepair(appContext, "alarm")
+        } catch (e: Throwable) {
+            Log.w(TAG, "保活闹钟处理失败: $e")
+        }
     }
 
     companion object {

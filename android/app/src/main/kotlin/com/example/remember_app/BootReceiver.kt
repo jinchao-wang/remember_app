@@ -24,10 +24,15 @@ class BootReceiver : BroadcastReceiver() {
         }
         val appContext = context.applicationContext
         Log.i(TAG, "收到 $action，重新排保活闹钟并检查监听服务")
-        ListenerKeepAlive.schedule(appContext)
-        // Job 是跨重启保留的（setPersisted），闹钟会被系统清掉，两者都要排。
-        ListenerWatchdogJob.schedule(appContext)
-        ListenerWatchdog.checkAndRepair(appContext, "boot")
+        // 和 App 同进程，抛异常就是进程猝死，兜住。
+        try {
+            ListenerKeepAlive.schedule(appContext)
+            // Job 是跨重启保留的（setPersisted），闹钟会被系统清掉，两者都要排。
+            ListenerWatchdogJob.schedule(appContext)
+            ListenerWatchdog.checkAndRepair(appContext, "boot")
+        } catch (e: Throwable) {
+            Log.w(TAG, "开机自启处理失败: $e")
+        }
     }
 
     companion object {

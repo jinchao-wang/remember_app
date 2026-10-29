@@ -11,8 +11,42 @@ class DatabaseHelper {
   Future<Database> get database {
     // 缓存 Future 而不是 Database：首页 IndexedStack 的三个 Tab 会在同一帧
     // 各自触发一次查询，若只缓存 _db 则三者都会看到 null 并并发 openDatabase。
-    _dbFuture ??= _init();
-    return _dbFuture!;
+    final pending = _dbFuture;
+    if (pending != null) return pending;
+
+    // **失败必须把缓存清掉**：缓存的是 Future，一旦 openDatabase 抛异常，
+    // 这个「坏掉的 Future」会被永久缓存下去，进程内每一次查询都跟着抛同一个错。
+    //
+    // 这正是「App 直接打不开了」的成因之一：启动时读一次设置，
+    // 数据库刚好失败（磁盘满、文件损坏、迁移出错），
+    // 于是整个 App 每次打开都必然失败，用户怎么重开都没用。
+    //
+    // 失败后清缓存 + 抛出去，下一次调用会重新尝试打开，App 也就有了自救的可能。
+    final future = _init().then<Database>(
+      (db) => db,
+      onError: (Object error, StackTrace stack) {
+        _dbFuture = null;
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
+    _dbFuture = future;
+    return future;
+  }
+
+  /// 关掉当前连接并清掉缓存。
+  ///
+  /// 出错时给用户一个「重试」的机会：数据库恢复后能重新连上，
+  /// 而不是让整个 App 卡在打不开的状态。
+  Future<void> reset() async {
+    final pending = _dbFuture;
+    _dbFuture = null;
+    if (pending == null) return;
+    try {
+      final db = await pending;
+      await db.close();
+    } catch (_) {
+      // 本来就没连上，关不掉就算了。
+    }
   }
 
   Future<Database> _init() async {
@@ -81,10 +115,28 @@ CREATE TABLE IF NOT EXISTS app_settings(
       limit: 1,
     );
     if (rows.isEmpty) return defaultValue;
-    final v = rows.first['value'];
+    return parseBoolSetting(rows.first['value'], defaultValue: defaultValue);
+  }
+
+  /// 把数据库里存的值解析成布尔。
+  ///
+  /// **这里以前认不出自己写进去的值**：存的是字符串 '1' / '0'，
+  /// 读的时候却只认 'true' / 'false'，于是用户把开关打开（存 '1'），
+  /// 重启 App 读回来是 false——开关自己变回关闭，
+  /// 跨来源判重也等于被悄悄关掉了。
+  ///
+  /// 两种写法都得认：老数据里可能有 'true'/'false'，
+  /// 新写进去的是 '1'/'0'。认不出来就退回默认值，
+  /// 绝不猜——猜错会让用户的设置「自己乱变」。
+  static bool parseBoolSetting(Object? v, {required bool defaultValue}) {
     if (v is bool) return v;
     if (v is num) return v != 0;
-    return '${v ?? ''}'.toLowerCase() == 'true';
+    final s = '${v ?? ''}'.trim().toLowerCase();
+    if (s == 'true' || s == '1') return true;
+    if (s == 'false' || s == '0') return false;
+    // 空值和认不出来的值一样：退回默认值。
+    // 绝不把「空」当成「关」——那会让一个从没设置过的项悄悄变成关闭。
+    return defaultValue;
   }
 
   /// 写一个布尔型设置项。

@@ -359,6 +359,21 @@ class ListenerDiagnosticsService {
     }
   }
 
+  /// 把 Dart 侧的异常告诉原生层，存进诊断记录。
+  ///
+  /// release 版 Flutter 自己不打印堆栈，用户只看得到「白屏」。
+  /// 记下来，下次打开 App 就能在诊断详情里看到原始异常。
+  static Future<void> recordDartError(String detail) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'recordDartError',
+        {'detail': detail},
+      );
+    } catch (_) {
+      // 存不上就算了，不能因为记录错误又抛一个。
+    }
+  }
+
   /// 打开「通知使用权」系统设置。
   static Future<void> openNotificationSettings() =>
       _invoke('openNotificationSettings');

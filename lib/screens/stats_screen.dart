@@ -18,6 +18,10 @@ class StatsScreen extends StatefulWidget {
 class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClientMixin {
   List<Transaction> _all = [];
   bool _loading = true;
+
+  /// 数据库读失败时的原因；为空表示一切正常。
+  String? _error;
+
   DateTime _selectedMonth = DateTime.now();
 
   @override
@@ -37,12 +41,34 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
   }
 
   Future<void> _reload() async {
-    final list = await DatabaseHelper.instance.getTransactions();
-    if (!mounted) return;
+    try {
+      final list = await DatabaseHelper.instance.getTransactions();
+      if (!mounted) return;
+      setState(() {
+        _all = list;
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      // 读失败就明说，并给重试入口。
+      // 否则 `_loading` 永远是 true，首屏是一个转不完的加载圈，
+      // 用户只会觉得「App 打不开了」。
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  /// 重试读取。顺带把数据库连接整个重置掉，避免复用坏连接。
+  Future<void> _retryLoad() async {
     setState(() {
-      _all = list;
-      _loading = false;
+      _loading = true;
+      _error = null;
     });
+    await DatabaseHelper.instance.reset();
+    await _reload();
   }
 
   double _sum(List<Transaction> list, String type) =>
@@ -73,6 +99,39 @@ class _StatsScreenState extends State<StatsScreen> with AutomaticKeepAliveClient
     super.build(context);
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    // 数据读不出来时给出原因和重试入口，而不是一直转圈。
+    final error = _error;
+    if (error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 40, color: Colors.red.shade700),
+              const SizedBox(height: 12),
+              Text(
+                '统计读不出来',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '数据没能加载出来。点下面的按钮重试。\n\n$error',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _retryLoad,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     final monthTx = _monthTx();

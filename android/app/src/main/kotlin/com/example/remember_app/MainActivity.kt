@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -13,6 +14,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import kotlin.system.exitProcess
 
 class MainActivity : FlutterActivity() {
 
@@ -21,12 +23,29 @@ class MainActivity : FlutterActivity() {
     /** 通知权限申请的异步结果，等用户在系统弹窗上选择后再回传。 */
     private var pendingPermissionResult: MethodChannel.Result? = null
 
+    /** 崩溃记录器是否已经装好了。 */
+    private var crashRecorderInstalled = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // 必须在 super.onCreate 之前装崩溃记录器：
+        // Flutter 引擎是在 super.onCreate() 里创建的，
+        // 引擎初始化阶段的崩溃如果没装记录器就抓不到了——
+        // 而那正好是「App 点开就没了」最常见的死法。
+        installCrashRecorder()
+        super.onCreate(savedInstanceState)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        PaymentEvents.init(applicationContext)
+        try {
+            PaymentEvents.init(applicationContext)
+        } catch (e: Throwable) {
+            Log.w(TAG, "初始化事件总线失败: $e")
+        }
         installCrashRecorder()
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        try {
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "startListening" -> {
                     result.success(true)
@@ -113,36 +132,56 @@ class MainActivity : FlutterActivity() {
                 "requestNotificationPermission" -> {
                     requestNotificationPermission(result)
                 }
+                // Dart 侧未捕获的异常也记下来。
+                // release 版 Flutter 自己不会打印堆栈，
+                // 用户看到的只有「白屏」或「闪一下就没了」，
+                // 记下来才有机会定位。
+                "recordDartError" -> {
+                    val detail = call.argument<String>("detail") ?: ""
+                    Log.e(TAG, "Dart 异常: $detail")
+                    ListenerDiagnostics.recordCrash(applicationContext, "Dart: $detail")
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
+        } catch (e: Throwable) {
+            // 通道注册失败不该让 App 起不来：
+            // Dart 侧每个调用都自己兜着 MissingPluginException，
+            // 少一个通道只是那个功能不可用，不是崩溃。
+            Log.w(TAG, "注册原生通道失败: $e")
+        }
 
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
-            object : EventChannel.StreamHandler {
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    eventSink = events
+        try {
+            EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
+                object : EventChannel.StreamHandler {
+                    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                        eventSink = events
 
-                    val emit: (Double, String, String, String, Long) -> Unit = { amount, sourceApp, content, type, ts ->
-                        eventSink?.success(mapOf(
-                            "amount" to amount,
-                            "sourceApp" to sourceApp,
-                            "content" to content,
-                            "type" to type,
-                            "timestamp" to ts
-                        ))
+                        val emit: (Double, String, String, String, Long) -> Unit = { amount, sourceApp, content, type, ts ->
+                            eventSink?.success(mapOf(
+                                "amount" to amount,
+                                "sourceApp" to sourceApp,
+                                "content" to content,
+                                "type" to type,
+                                "timestamp" to ts
+                            ))
+                        }
+
+                        PaymentEvents.listener = emit
+                        // 补发 App 未运行期间积压的支付通知。
+                        PaymentEvents.flushPending(emit)
                     }
 
-                    PaymentEvents.listener = emit
-                    // 补发 App 未运行期间积压的支付通知。
-                    PaymentEvents.flushPending(emit)
+                    override fun onCancel(arguments: Any?) {
+                        eventSink = null
+                        PaymentEvents.listener = null
+                    }
                 }
-
-                override fun onCancel(arguments: Any?) {
-                    eventSink = null
-                    PaymentEvents.listener = null
-                }
-            }
-        )
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "注册事件通道失败: $e")
+        }
     }
 
     override fun onResume() {
@@ -152,11 +191,26 @@ class MainActivity : FlutterActivity() {
         // 用户打开 App 就说明进程刚起来，系统这时通常会重新绑定监听服务；
         // 主动检查可以让「打开 App 就恢复正常」这件事立刻发生，
         // 而不是等下一次闹钟。
-        ListenerKeepAlive.schedule(applicationContext)
-        ListenerWatchdogJob.schedule(applicationContext)
+        //
+        // **这四件事必须逐个兜住异常**：它们全是「锦上添花」的后台保活，
+        // 任何一件在某些机型上抛异常（后台启动限制、厂商 ROM 的差异），
+        // 都不该让用户「打不开 App」。这里抛出 = 崩溃 = 白屏闪退。
+        runSafely("排保活闹钟") { ListenerKeepAlive.schedule(applicationContext) }
+        runSafely("排看门狗任务") { ListenerWatchdogJob.schedule(applicationContext) }
         // 用户可见的前台，启动前台服务没有任何限制。
-        ListenerForegroundService.ensureRunning(applicationContext)
-        ListenerWatchdog.checkAndRepair(applicationContext, "app_foreground")
+        runSafely("启动常驻服务") { ListenerForegroundService.ensureRunning(applicationContext) }
+        runSafely("看门狗检查") {
+            ListenerWatchdog.checkAndRepair(applicationContext, "app_foreground")
+        }
+    }
+
+    /** 跑一段可能抛异常的保活动作，抛了就记日志，绝不让它掀翻整个 App。 */
+    private fun runSafely(what: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Throwable) {
+            Log.w(TAG, "$what 失败: $e")
+        }
     }
 
     override fun onDestroy() {
@@ -288,18 +342,44 @@ class MainActivity : FlutterActivity() {
      * 这里把崩溃时的异常记到本地，下次打开 App 时显示在「诊断详情」里。
      */
     private fun installCrashRecorder() {
+        if (crashRecorderInstalled) return
+        crashRecorderInstalled = true
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val message = "${throwable.javaClass.simpleName}: ${throwable.message ?: "(无消息)"}"
+                val message = describeCrash(throwable)
                 Log.e(TAG, "App 崩溃: $message", throwable)
                 ListenerDiagnostics.recordCrash(applicationContext, message)
             } catch (e: Throwable) {
                 // 记崩溃失败也不能再崩一次。
             }
             // 交给系统原来的处理流程（弹崩溃框、结束进程）。
-            previous?.uncaughtException(thread, throwable)
+            if (previous != null) {
+                previous.uncaughtException(thread, throwable)
+            } else {
+                // 没有默认处理器的话，系统不会来收尾，
+                // 进程会半死不活地僵在原地——那正是「App 打不开」最难缠的死法。
+                // 这里自己收干净，至少让用户下次能重新打开。
+                android.os.Process.killProcess(android.os.Process.myPid())
+                exitProcess(10)
+            }
         }
+    }
+
+    /**
+     * 把异常压成一行能存进 SharedPreferences 的文字。
+     *
+     * 只带最上面几帧：完整堆栈可能几百行，塞不下，
+     * 而且用户看得懂的是「在哪儿炸的」。
+     */
+    private fun describeCrash(throwable: Throwable): String {
+        val sb = StringBuilder()
+        sb.append(throwable.javaClass.simpleName)
+        throwable.message?.let { sb.append(": ").append(it) }
+        throwable.stackTrace.take(6).forEach { frame ->
+            sb.append("\n  at ").append(frame)
+        }
+        return sb.toString()
     }
 
     /**

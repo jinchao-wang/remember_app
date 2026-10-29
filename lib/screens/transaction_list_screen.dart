@@ -58,6 +58,15 @@ class _TransactionListScreenState extends State<TransactionListScreen>
   int _scopeCount = 0;
 
   bool _loading = true;
+
+  /// 数据库读失败时的原因。
+  ///
+  /// 以前这里一失败就抛异常，`_loading` 永远停在 true，
+  /// 首屏就是一个**永远转不完的加载圈**——
+  /// 用户看到的正是「App 打不开了」，而且因为失败的 Future 被缓存了，
+  /// 每次启动都必然卡在这里，怎么重开都没用。
+  String? _error;
+
   String _filterType = 'all';
   String _categoryFilter = 'all';
   String _keyword = '';
@@ -89,15 +98,41 @@ class _TransactionListScreenState extends State<TransactionListScreen>
   }
 
   Future<void> _reload() async {
-    final tx = await DatabaseHelper.instance.getTransactions();
-    if (!mounted) return;
+    try {
+      final tx = await DatabaseHelper.instance.getTransactions();
+      if (!mounted) return;
+      setState(() {
+        _list = widget.selectedDate != null
+            ? tx.where((t) => _isSameDay(t, widget.selectedDate!)).toList()
+            : tx;
+        _loading = false;
+        _error = null;
+        _recompute();
+      });
+    } catch (e) {
+      // 读不出来就明说，并且给一个重试的入口。
+      //
+      // 最怕的是「假装成功」：加载圈转 forever，用户既看不到账单，
+      // 也不知道出了什么事，只能认定 App 坏了。
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  /// 重试读取。
+  ///
+  /// 先把数据库连接整个重置掉：上一次失败可能留下了一个半开的连接，
+  /// 不重置的话重试还是用同一个坏连接。
+  Future<void> _retryLoad() async {
     setState(() {
-      _list = widget.selectedDate != null
-          ? tx.where((t) => _isSameDay(t, widget.selectedDate!)).toList()
-          : tx;
-      _loading = false;
-      _recompute();
+      _loading = true;
+      _error = null;
     });
+    await DatabaseHelper.instance.reset();
+    await _reload();
   }
 
   bool _isSameDay(Transaction t, DateTime date) =>
@@ -868,11 +903,56 @@ class _TransactionListScreenState extends State<TransactionListScreen>
     );
   }
 
+  /// 数据库读不出来时的界面。
+  ///
+  /// 要有一句「出了什么事」和一个「重试」按钮：
+  /// 用户最怕的是既看不到账单、又不知道为什么。
+  Widget _buildErrorState(String error) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 40, color: context.scheme.error),
+            const SizedBox(height: 12),
+            Text(
+              '账单读不出来',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '数据没能加载出来。点下面的按钮重试。\n\n$error',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: context.scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _retryLoad,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    // 数据读不出来时不能装作「没有账单」——
+    // 空列表会让用户以为账被清了，那比报错更糟。
+    final error = _error;
+    if (error != null) {
+      return _buildErrorState(error);
     }
 
     if (_rows.isEmpty) {

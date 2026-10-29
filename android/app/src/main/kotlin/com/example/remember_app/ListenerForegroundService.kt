@@ -60,29 +60,41 @@ class ListenerForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 必须在 5 秒内调用 startForeground，否则系统会抛异常并判我们违规。
-        if (!startForegroundCompat()) {
-            // 进不去前台就立刻把自己停掉。
-            //
-            // 这一步很关键：**不停止的话，系统会在 5 秒后抛
-            // ForegroundServiceDidNotStartInTimeException，那是进程级崩溃**——
-            // 表现就是「App 一打开就闪退」，而且是在后台触发的，用户完全看不懂。
-            //
-            // 什么情况下会进不去前台？Android 12+ 限制后台启动前台服务：
-            // 闹钟/Job 把进程拉起来时，服务可能根本不被允许进前台。
-            // 这种情况下放弃常驻服务即可——闹钟和 Job 两条腿还在，
-            // 用户下次打开 App 时会再试。
-            Log.w(TAG, "无法进入前台，停掉常驻服务")
+        // 整个方法体兜住异常：这里是系统回调，抛出去就是进程猝死。
+        try {
+            // 必须在 5 秒内调用 startForeground，否则系统会抛异常并判我们违规。
+            if (!startForegroundCompat()) {
+                // 进不去前台就立刻把自己停掉。
+                //
+                // 这一步很关键：**不停止的话，系统会在 5 秒后抛
+                // ForegroundServiceDidNotStartInTimeException，那是进程级崩溃**——
+                // 表现就是「App 一打开就闪退」，而且是在后台触发的，用户完全看不懂。
+                //
+                // 什么情况下会进不去前台？Android 12+ 限制后台启动前台服务：
+                // 闹钟/Job 把进程拉起来时，服务可能根本不被允许进前台。
+                // 这种情况下放弃常驻服务即可——闹钟和 Job 两条腿还在，
+                // 用户下次打开 App 时会再试。
+                Log.w(TAG, "无法进入前台，停掉常驻服务")
+                try {
+                    stopSelf()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "停止服务失败: $e")
+                }
+                return START_NOT_STICKY
+            }
+            // START_STICKY：进程被系统回收之后，系统会重新把它拉起来。
+            // 这正是「退到后台 / 被清理之后还能继续监听」的关键。
+            return START_STICKY
+        } catch (e: Throwable) {
+            // 兜底：这里抛出去系统会当进程崩溃处理，App 直接闪退。
+            Log.w(TAG, "常驻服务启动失败，已停掉: $e")
             try {
                 stopSelf()
-            } catch (e: Throwable) {
-                Log.w(TAG, "停止服务失败: $e")
+            } catch (t: Throwable) {
+                Log.w(TAG, "停止服务失败: $t")
             }
             return START_NOT_STICKY
         }
-        // START_STICKY：进程被系统回收之后，系统会重新把它拉起来。
-        // 这正是「退到后台 / 被清理之后还能继续监听」的关键。
-        return START_STICKY
     }
 
     /**

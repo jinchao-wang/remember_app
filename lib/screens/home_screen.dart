@@ -64,6 +64,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final diag = _diagnostics;
     if (diag == null) return null;
 
+    // 上次崩溃优先展示。
+    //
+    // 用户报「App 打不开」时，这一行就是最直接的线索。
+    // 它必须出现在**首页**——因为「打不开」往往意味着用户压根进不到设置页，
+    // 藏在设置页里的信息等于没有。
+    if (diag.lastCrash.isNotEmpty) {
+      // 原生崩溃和 Dart 异常都记在这里，但说法不一样：
+      // 说「崩溃了」而实际只是读数据失败，会让用户以为 App 闪退过。
+      final isDart = diag.lastCrash.trimLeft().startsWith('Dart:');
+      return _warningBar(
+        '${isDart ? '上次运行出错了' : '上次运行崩溃了'}：'
+        '${_firstLine(diag.lastCrash)}，点此查看详情',
+        Icons.bug_report,
+      );
+    }
+
     final String message;
     final IconData icon;
     if (!diag.listenerEnabled) {
@@ -76,6 +92,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return null;
     }
 
+    return _warningBar(message, icon);
+  }
+
+  /// 崩溃摘要只取第一行：完整堆栈在告警条里放不下，
+  /// 完整内容在设置页的诊断详情里。
+  String _firstLine(String text) {
+    final line = text.split('\n').first.trim();
+    return line.length > 60 ? '${line.substring(0, 60)}…' : line;
+  }
+
+  Widget _warningBar(String message, IconData icon) {
     return Material(
       color: context.scheme.errorContainer,
       child: InkWell(
