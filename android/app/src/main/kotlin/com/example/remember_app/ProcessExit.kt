@@ -105,13 +105,30 @@ object ProcessExit {
     }
 
     /**
-     * 最近一次「非用户主动」的退出时间。
+     * 最近一次「不是用户主动强停」的进程结束时间。
      *
-     * 只认低内存回收这种「我们自己能救」的死亡。
-     * 用户主动划掉的不算——那是用户的意愿，不该拿来当故障证据。
+     * ## 认哪些死法
+     *
+     * - **低内存回收**：系统内存不够，把进程杀了。
+     * - **用户划掉最近任务 / 清理助手杀后台**：用户（或 ROM 的清理助手）
+     *   把 App 从后台干掉了。
+     *
+     * 这两种都要算，因为**它们都只杀进程，不解绑、不禁用**：
+     * 系统理论上应该把通知监听服务重新绑回来，绑不回来才是故障。
+     * 「用户划掉之后监听就再也不生效了」正是这么来的。
+     *
+     * 至于「用户在系统设置里点了强行停止」——那是平台级的硬限制，
+     * 被强停后系统不跑本 App 的任何组件，闹钟和 Job 也被清掉了，
+     * 看门狗根本轮不到跑；用户重新打开 App 时系统会重新绑定。
+     * 所以它不该被当成故障证据。
+     *
+     * Android 14 上「划掉」和「强停」都记成 `REASON_USER_REQUESTED`，
+     * 内部那个能区分二者的 subreason 不是公开 API，拿不到。
+     * 但这不会造成误判：被强停时闹钟和 Job 都被清掉了，
+     * 看门狗压根不会运行；等用户重新打开 App，系统会重新绑定。
      */
-    fun lastRecoverableKillAt(context: Context): Long {
+    fun lastUnexpectedKillAt(context: Context): Long {
         val record = lastExit(context) ?: return 0L
-        return if (record.lowMemory) record.timestamp else 0L
+        return if (record.lowMemory || record.userSwipedAway) record.timestamp else 0L
     }
 }

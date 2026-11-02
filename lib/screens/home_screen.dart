@@ -86,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       message = '自动记账未开启：支付通知不会被记录，去「设置 → 自动记账」开启通知使用权';
       icon = Icons.warning_amber;
     } else if (!diag.serviceEverConnected) {
-      message = '自动记账未生效：已授权但系统还没拉起监听服务，去「设置 → 自动记账」查看排查指引';
+      message = '自动记账未生效：已授权但系统还没拉起监听服务。App 会在后台自动重连，急用可去「设置 → 自动记账」手动重连';
       icon = Icons.error_outline;
     } else {
       return null;

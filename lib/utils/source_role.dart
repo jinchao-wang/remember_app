@@ -188,6 +188,110 @@ const List<String> kBankContentHints = <String>[
   '账户支出',
 ];
 
+/// 认不出来的 App 的通知里，出现这些词就认为「这条讲的是银行卡/账户的事」。
+///
+/// ## 为什么需要它
+///
+/// 用户报「微信记了一笔、信用卡 App 又记了一笔，其实是一笔付款」。
+/// 根因是**信用卡 App 的包名认不出来**（[kBankPackageIds] 只有 18 家，
+/// 信用卡 App / 地方银行 / 数字银行都不在里面），
+/// 于是它的通知被判成「其它」，和「微信」配不成一对，账单就记了两条。
+///
+/// 而信用卡 App 的通知正文几乎总会提到「信用卡」「尾号」「额度」这类词——
+/// 那是卡本身，不依赖包名，认得出来就能配对。
+///
+/// ## 刻意收得很紧
+///
+/// 这张表**只**用于「包名认不出来」的 App，而且只收银行短信/银行通知里
+/// 才会出现的词。像「扣款」「支付」这种谁都能说的词不在表里——
+/// 否则路边随便一个商家 App 发了句「扣款 31.31」就会被当成银行通知，
+/// 进而和微信那条并成一条，用户平白少一笔账。
+///
+/// 平台 App（微信/支付宝等）不受这张表影响：它们的角色由包名决定，
+/// 正文里出现「信用卡」也不会被当成银行通知。
+const List<String> kCardTransactionHints = <String>[
+  '信用卡',
+  '借记卡',
+  '储蓄卡',
+  '贷记卡',
+  '尾号',
+  '可用额度',
+  '信用额度',
+  '账户余额',
+  '交易金额',
+  '消费支出',
+  '代扣',
+  '账单日',
+  '还款日',
+  '手机银行',
+  '网银',
+];
+
+/// 正文里出现的「卡号后四位」。
+///
+/// 写法一：银行通知里的「尾号8888」。
+final RegExp _tailAfterHao = RegExp(r'尾号\s*[*＊]{0,6}\s*(\d{4})(?!\d)');
+
+/// 写法二：微信支付里的「使用招商银行(1234)信用卡支付」。
+final RegExp _tailBeforeCard = RegExp(
+  r'[（(]\s*(\d{4})\s*[）)]?\s*(?:信用卡|借记卡|储蓄卡|贷记卡)',
+);
+
+/// 写法三：「信用卡(1234)」。
+final RegExp _tailAfterCard = RegExp(
+  r'(?:信用卡|借记卡|储蓄卡|贷记卡)\s*[（(]\s*(\d{4})',
+);
+
+/// 写法四：「卡号****8888」这种打码卡号。
+final RegExp _tailMasked = RegExp(r'[*＊]{2,}\s*(\d{4})(?!\d)');
+
+/// 从通知正文里认出**卡号后四位**。
+///
+/// ## 它为什么是「同一笔」的硬证据
+///
+/// 同一张卡的两条通知（同一家银行 App + 微信支付、或者银行 App + 银行短信）
+/// 都会带上同一个后四位：
+/// - 银行 App：「您尾号8888的信用卡于…」
+/// - 微信支付：「使用招商银行(1234)信用卡支付31.31元」
+///
+/// 「同一张卡 + 同一金额 + 同一方向 + 几分钟内」几乎不可能是两笔真交易，
+/// 所以它比「同一家银行」还准，可以单独作为跨来源合并的依据。
+///
+/// 认不出返回 null（绝大多数通知都认不出，这很正常）。
+String? cardTailOfContent(String content) {
+  if (content.isEmpty) return null;
+
+  final byHao = _tailAfterHao.firstMatch(content);
+  if (byHao != null) return byHao.group(1);
+
+  final beforeCard = _tailBeforeCard.firstMatch(content);
+  if (beforeCard != null) return beforeCard.group(1);
+
+  final afterCard = _tailAfterCard.firstMatch(content);
+  if (afterCard != null) return afterCard.group(1);
+
+  // 打码卡号：必须前文有「卡」字，否则「****1234」可能只是订单号。
+  final cardIndex = content.indexOf('卡');
+  if (cardIndex >= 0) {
+    final masked = _tailMasked.firstMatch(content.substring(cardIndex));
+    if (masked != null) return masked.group(1);
+  }
+
+  return null;
+}
+
+/// 正文看起来像是在讲「银行卡/账户」的事。
+///
+/// 比 [kBankContentHints] 收得更紧（那张表里有「POS」「活期」这类
+/// 只在短信里才见的词），专门用于「包名认不出来」的 App。
+bool looksLikeCardTransaction(String content) {
+  if (content.isEmpty) return false;
+  for (final hint in kCardTransactionHints) {
+    if (content.contains(hint)) return true;
+  }
+  return false;
+}
+
 /// 包名 -> 用户看得懂的来源名。
 ///
 /// 账单页副标题要显示「这笔是从哪来的」，
@@ -288,13 +392,19 @@ class SourceIdentity {
   /// 认得出的银行标识（如 `cmbchina`）。认不出为 null。
   final String? bankId;
 
-  const SourceIdentity(this.role, [this.bankId]);
+  /// 认得出的卡号后四位（如 `8888`）。认不出为 null。
+  ///
+  /// 它是「同一笔」最硬的一条证据：同一张卡在两条通知里露出的后四位一样，
+  /// 配合金额、方向、时间窗，基本可以断定是同一笔扣款。
+  final String? cardTail;
+
+  const SourceIdentity(this.role, [this.bankId, this.cardTail]);
 
   /// 这条通知讲的是不是银行的事。
   bool get isBank => role == SourceRole.bank;
 
   @override
-  String toString() => 'SourceIdentity($role, $bankId)';
+  String toString() => 'SourceIdentity($role, $bankId, $cardTail)';
 }
 
 /// 从通知正文里认出是哪家银行。
@@ -308,53 +418,71 @@ String? bankIdOfContent(String content) {
   return null;
 }
 
-/// 判断一条通知的完整身份（角色 + 哪家银行）。
+/// 判断一条通知的完整身份（角色 + 哪家银行 + 哪张卡）。
 ///
 /// 判定顺序：
 /// 1. 包名在支付平台表里 -> platform
-///    （正文里的银行名照样记下来——微信支付通知常带银行名，
+///    （正文里的银行名、卡号后四位照样记下来——微信支付通知常带这两样，
 ///    「使用招商银行(1234)信用卡支付」在跨来源判重时非常有用）
 /// 2. 包名在银行 App 表里 -> bank，银行 id 直接由包名给出
 /// 3. 包名是短信 App -> 正文能认出银行名就是 bank，
 ///    否则看特征词；都认不出就是 other
-/// 4. 其余包名 -> 正文里能认出银行名就是 bank，否则 other
+/// 4. 其余包名 -> 正文里能认出银行名，或者正文明显在讲卡/账户，就是 bank；
+///    都认不出就是 other
 ///
 /// 第 4 步比 [roleOf] 宽松了一点：只要正文明确写了是哪家银行，
-/// 就认为这条通知讲的是银行的事。认不出银行名时仍然保守地当成 other。
+/// 就认为这条通知讲的是银行的事；连银行名都没写、但写了「信用卡/尾号/额度」
+/// 这类只属于银行卡的话，也算银行通知——
+///
+/// 认不出银行名时仍然保守地当成 other。
+///
+/// ## 为什么要放宽第 4 步
+///
+/// 用户报「微信记了一笔、信用卡 App 又记了一笔，其实是一笔付款」。
+/// 信用卡 App 的包名穷举不完（[kBankPackageIds] 只有 18 家），
+/// 认不出包名就判成「其它」，和「微信」配不成一对，账单就记了两条。
+/// 信用卡 App 的正文里几乎总会写「信用卡」「尾号8888」——
+/// 那是卡本身，不依赖包名，认得出来就能配对。
 SourceIdentity identityOf({String? packageName, required String content}) {
   final pkg = (packageName ?? '').trim().toLowerCase();
   final contentBankId = bankIdOfContent(content);
+  final cardTail = cardTailOfContent(content);
 
   if (pkg.isEmpty) {
     return SourceIdentity(
       contentBankId != null ? SourceRole.bank : SourceRole.other,
       contentBankId,
+      cardTail,
     );
   }
 
   if (kPlatformPackages.contains(pkg)) {
-    return SourceIdentity(SourceRole.platform, contentBankId);
+    return SourceIdentity(SourceRole.platform, contentBankId, cardTail);
   }
 
   final packageBankId = kBankPackageIds[pkg];
   if (packageBankId != null) {
-    return SourceIdentity(SourceRole.bank, packageBankId);
+    return SourceIdentity(SourceRole.bank, packageBankId, cardTail);
   }
 
   if (kSmsPackages.contains(pkg)) {
     if (contentBankId != null) {
-      return SourceIdentity(SourceRole.bank, contentBankId);
+      return SourceIdentity(SourceRole.bank, contentBankId, cardTail);
     }
+    final bankish = isBankByContent(content) || looksLikeCardTransaction(content);
     return SourceIdentity(
-      isBankByContent(content) ? SourceRole.bank : SourceRole.other,
+      bankish ? SourceRole.bank : SourceRole.other,
       null,
+      cardTail,
     );
   }
 
-  // 认不出来的包名：正文里写了银行名就当银行通知。
+  // 认不出来的包名：正文里写了银行名、或者明显在讲卡/账户，都当银行通知。
+  final bankish = contentBankId != null || looksLikeCardTransaction(content);
   return SourceIdentity(
-    contentBankId != null ? SourceRole.bank : SourceRole.other,
+    bankish ? SourceRole.bank : SourceRole.other,
     contentBankId,
+    cardTail,
   );
 }
 
@@ -362,19 +490,52 @@ SourceIdentity identityOf({String? packageName, required String content}) {
 ///
 /// 满足其一即可：
 /// 1. **支付平台 ↔ 银行**（原有的规则）；
-/// 2. **同一家银行**（新增）。
+/// 2. **同一家银行**（新增）；
+/// 3. **同一张卡**（后四位相同）。
 ///
 /// 第 2 条覆盖了原先漏掉的几个场景：
 /// - 银行 App（不在包名表里）+ 银行短信 —— 两边角色都是 bank，配不上；
 /// - 银行短信 + 微信支付（正文里都带银行名）—— 短信被当成 other，配不上。
 ///
-/// 误合并的风险很小：要求「认得出同一家银行」比「同金额」强得多，
-/// 而同一家银行在几分钟内同额同向的两笔真交易相当罕见。
+/// 第 3 条是用户报「微信一笔 + 信用卡一笔」的兜底：
+/// 信用卡 App 的包名认不出、银行名正文里也没写的时候，
+/// 只有卡号后四位能把两边连起来。
+///
+/// 误合并的风险很小：要求「同金额 + 同方向 + 10 分钟内」，
+/// 而同一张卡在这么短时间内同额同向的两笔真交易相当罕见。
+///
+/// ## 不同的卡直接否掉
+///
+/// 两边都认得出卡号后四位、但**不一样**时，一定不是同一笔：
+/// 微信那条写的是 (1234)、银行那条写的是尾号 8888，
+/// 那就是两张卡上的两笔消费，哪怕金额、时间都撞上也该分开记。
 bool isSamePaymentPair(SourceIdentity a, SourceIdentity b) {
+  if (isDifferentCard(a, b)) return false;
   if (isCrossSourcePair(a.role, b.role)) return true;
   final bankA = a.bankId;
   final bankB = b.bankId;
-  return bankA != null && bankA == bankB;
+  if (bankA != null && bankA == bankB) return true;
+  return isSameCard(a, b);
+}
+
+/// 是不是同一张卡（卡号后四位相同）。
+///
+/// 两边都认得出后四位、且一模一样时才算。
+bool isSameCard(SourceIdentity a, SourceIdentity b) {
+  final tailA = a.cardTail;
+  final tailB = b.cardTail;
+  return tailA != null && tailA == tailB;
+}
+
+/// 两边都认得出卡号后四位、但不一样 -> 一定不是同一张卡。
+///
+/// 只有「两边都认得出」才比；有一边认不出（比如微信那条没写卡号）
+/// 就下不了这个结论，不能因此把真正的同一笔拆成两笔。
+bool isDifferentCard(SourceIdentity a, SourceIdentity b) {
+  final tailA = a.cardTail;
+  final tailB = b.cardTail;
+  if (tailA == null || tailB == null) return false;
+  return tailA != tailB;
 }
 
 /// 两个角色配对起来是不是「支付平台 ↔ 银行」。

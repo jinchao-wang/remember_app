@@ -37,6 +37,58 @@ object ListenerDiagnostics {
     private const val KEY_LAST_KILL_AT = "lastKillAt"
     private const val KEY_LAST_KILL_REASON = "lastKillReason"
     private const val KEY_LAST_CRASH = "lastCrash"
+    private const val KEY_AUTHORIZED_SINCE = "authorizedSince"
+
+    /**
+     * 本进程第一次碰到诊断存储的时间，用来近似「进程启动时间」。
+     *
+     * 它存在的意义：判断「进程被杀之后有没有真的重新起来过」。
+     * 没有重新起来，就谈不上「起来了却绑不回去」——
+     * 那种情况多半是用户刚打开 App，系统还没来得及回调连接。
+     */
+    @Volatile
+    private var processStartedAt: Long = 0L
+
+    /**
+     * 当前进程启动的大致时间（毫秒）。
+     *
+     * 取「本进程第一次碰到诊断存储」的时刻——
+     * 那几乎就是进程刚被拉起来的那一刻，误差在毫秒级。
+     */
+    fun processStartedAt(): Long {
+        if (processStartedAt == 0L) {
+            processStartedAt = System.currentTimeMillis()
+        }
+        return processStartedAt
+    }
+
+    /**
+     * 记下「第一次发现系统里已经勾了通知使用权」的时间，并返回它。
+     *
+     * ## 为什么要记它
+     *
+     * 用户报「刚装上就不生效，点了重新监听按钮才好」：
+     * 手动那条按钮走的是重置组件，而自动路径当时拿不到任何硬证据，
+     * 只能一直空转 `requestRebind`（对绑定僵死经常无效）。
+     *
+     * 补上这条证据要有个时间锚点：得知道「授权了多久」。
+     * 这个锚点就是本函数记录的首次观察到授权的时刻——
+     * 它一旦写入就不再改动（除非用户清数据），所以「授权了多久」
+     * 是个稳定的量，不会因为看门狗多跑几次而漂移。
+     */
+    fun recordAuthorizedFirstSeen(context: Context): Long {
+        val p = prefs(context) ?: return 0L
+        val existing = p.getLong(KEY_AUTHORIZED_SINCE, 0L)
+        if (existing > 0L) return existing
+        val now = System.currentTimeMillis()
+        // 用 commit：这是判断依据，宁可多写一次盘也别丢。
+        p.edit().putLong(KEY_AUTHORIZED_SINCE, now).commit()
+        return now
+    }
+
+    /** 第一次观察到「已授权」的时间；还没观察到过就是 0。 */
+    fun authorizedSince(context: Context): Long =
+        prefs(context)?.getLong(KEY_AUTHORIZED_SINCE, 0L) ?: 0L
 
     /**
      * 「收到过通知」这个存活信号的写入间隔：1 分钟。
@@ -297,6 +349,7 @@ object ListenerDiagnostics {
             "autoRepairMessage" to (p?.getString(KEY_AUTO_REPAIR_MESSAGE, "") ?: ""),
             "lastKillAt" to (p?.getLong(KEY_LAST_KILL_AT, 0L) ?: 0L),
             "lastKillReason" to (p?.getString(KEY_LAST_KILL_REASON, "") ?: ""),
+            "authorizedSince" to (p?.getLong(KEY_AUTHORIZED_SINCE, 0L) ?: 0L),
             "lastCrash" to (p?.getString(KEY_LAST_CRASH, "") ?: ""),
             "recentNotifications" to notifs
         )

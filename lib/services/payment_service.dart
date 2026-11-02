@@ -79,13 +79,17 @@ class PaymentService {
   ///
   /// 来源要能配成同一笔，满足其一即可：
   /// 1. **支付平台 ↔ 银行**（原有的规则）；
-  /// 2. **同一家银行**（新增，见 [isSamePaymentPair]）。
+  /// 2. **同一家银行**（新增，见 [isSamePaymentPair]）；
+  /// 3. **同一张卡**（卡号后四位相同）。
   ///
   /// 第 2 条是为了堵住原先漏掉的一类重复：
   /// 用户装的银行 App 不在包名表里（信用卡 App、地方银行、数字银行…），
   /// 它的通知被判成「其它」，于是「微信 + 银行 App」配不上，
   /// 同一笔扣费被记成两笔。现在从通知正文里认出银行名，
   /// 两边认得出同一家银行就能合并。
+  ///
+  /// 第 3 条堵的是更窄的一类：信用卡 App 的正文里连银行名都没写，
+  /// 只有「尾号8888」。这时候靠卡号后四位把两边认成同一张卡。
   ///
   /// 其它组合一律返回 false——宁可漏合并，也不把两笔真交易并掉。
   static bool isSameCrossSourceEvent({
@@ -97,9 +101,19 @@ class PaymentService {
     required SourceRole eventRole,
     String? existingBankId,
     String? eventBankId,
+    String? existingCardTail,
+    String? eventCardTail,
   }) {
+    // 两边都认得出卡号后四位、但不一样 -> 一定不是同一笔。
+    // 微信那条写 (1234)、银行那条写尾号 8888，那是两张卡上的两笔消费。
+    if (existingCardTail != null &&
+        eventCardTail != null &&
+        existingCardTail != eventCardTail) {
+      return false;
+    }
     final pairable = isCrossSourcePair(existingRole, eventRole) ||
-        (existingBankId != null && existingBankId == eventBankId);
+        (existingBankId != null && existingBankId == eventBankId) ||
+        (existingCardTail != null && existingCardTail == eventCardTail);
     if (!pairable) return false;
     if ((existing.amount - eventAmount).abs() >= amountTolerance) return false;
     // 方向必须一致：同一笔不可能既是支出又是收入。
@@ -153,6 +167,8 @@ class PaymentService {
         eventRole: eventIdentity.role,
         existingBankId: existingIdentity.bankId,
         eventBankId: eventIdentity.bankId,
+        existingCardTail: existingIdentity.cardTail,
+        eventCardTail: eventIdentity.cardTail,
       )) {
         return existing;
       }
@@ -165,6 +181,7 @@ class PaymentService {
   ///   -> 跳过（系统重复推送同一笔）
   /// - **跨来源**：支付平台通知与银行通知说的是同一笔钱，
   ///   [crossSourceWindow] 内已存在同金额 + 同方向的自动账单 -> 跳过
+  ///   （「同一笔」的判据见 [isSameCrossSourceEvent]）
   /// - 用户手动编辑过的记录保持原样，不会被后续通知覆盖
   /// - 其余情况新增一条自动账单
   ///
@@ -259,6 +276,8 @@ class PaymentService {
           eventRole: identity.role,
           existingBankId: kIdentity.bankId,
           eventBankId: identity.bankId,
+          existingCardTail: kIdentity.cardTail,
+          eventCardTail: identity.cardTail,
         );
       });
       if (dup) {

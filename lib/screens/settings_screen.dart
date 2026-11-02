@@ -418,7 +418,7 @@ class SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObser
     if (!_listening) return '需在系统设置中开启通知权限，支付通知才能自动记录';
     if (diag == null) return '支付通知将自动记录为账单';
     if (!diag.serviceEverConnected) {
-      return '已授权，但系统还没有拉起过监听服务，目前收不到任何通知';
+      return '已授权，但系统还没有拉起过监听服务；App 会在后台自动重连';
     }
     if (!diag.serviceLooksConnected) return '监听服务已断开，点下面的按钮重连';
     final at = diag.lastEventAt;

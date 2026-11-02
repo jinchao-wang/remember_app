@@ -71,29 +71,58 @@ object PaymentEvents {
         )
         // 防止无限增长：超出上限时丢掉最旧的。
         while (arr.length() > MAX_PENDING) arr.remove(0)
-        p.edit().putString(KEY_PENDING, arr.toString()).apply()
+        // 用 commit 而不是 apply：这条通知是「用户已经付了钱」的凭据，
+        // 而 App 可能随时被系统或清理助手杀掉——apply 的异步写盘
+        // 在进程被杀时来不及落盘，这笔账就凭空没了。
+        // 崩溃记录（CrashRecorder）也是同样的理由用 commit。
+        p.edit().putString(KEY_PENDING, arr.toString()).commit()
         Log.i(TAG, "无 Flutter 监听，事件已缓存，积压 ${arr.length()} 条")
     }
 
-    /** Dart 侧订阅后调用，补发 App 未运行期间积压的事件。 */
+    /**
+     * Dart 侧订阅后调用，补发 App 未运行期间积压的事件。
+     *
+     * ## 交付成功才算数
+     *
+     * 旧实现是「先清空缓存，再逐条回调」：
+     * 进程正好在回调途中被杀的话，这批事件**既没补发出去、也没留在缓存里**，
+     * 直接消失了。
+     *
+     * 现在改成：逐条交付，**交付成功的才从缓存里移除**，
+     * 交付失败的（回调抛异常）留在缓存里下次再试。
+     * 这样「进程被杀」最多让这一批晚点补上，不会凭空消失。
+     */
     fun flushPending(onEvent: (Double, String, String, String, Long) -> Unit) {
         val p = prefs() ?: return
         val arr = readPending(p)
         if (arr.length() == 0) return
 
-        // 先清空再回调：即使回调过程中 Dart 侧出错，也不会重复补发。
-        p.edit().remove(KEY_PENDING).apply()
-
+        val remaining = JSONArray()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            onEvent(
-                o.optDouble("amount", 0.0),
-                o.optString("sourceApp", ""),
-                o.optString("content", ""),
-                o.optString("type", "expense"),
-                o.optLong("timestamp", System.currentTimeMillis())
-            )
+            var delivered = false
+            try {
+                onEvent(
+                    o.optDouble("amount", 0.0),
+                    o.optString("sourceApp", ""),
+                    o.optString("content", ""),
+                    o.optString("type", "expense"),
+                    o.optLong("timestamp", System.currentTimeMillis())
+                )
+                delivered = true
+            } catch (e: Throwable) {
+                Log.w(TAG, "补发事件失败，留在缓存里下次再试: $e")
+            }
+            if (!delivered) {
+                remaining.put(o)
+            }
         }
-        Log.i(TAG, "补发缓存事件 ${arr.length()} 条")
+
+        if (remaining.length() > 0) {
+            p.edit().putString(KEY_PENDING, remaining.toString()).commit()
+        } else {
+            p.edit().remove(KEY_PENDING).commit()
+        }
+        Log.i(TAG, "补发缓存事件 ${arr.length() - remaining.length()} 条")
     }
 }

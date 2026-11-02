@@ -53,6 +53,17 @@ object ListenerWatchdog {
                 "系统设置里没有勾选「通知使用权」"
             )
             ListenerForegroundService.stop(appContext)
+            // **保活闹钟必须继续排**，这里 return 不能把闹钟链掐断。
+            //
+            // 旧实现在这里直接 return，闹钟断掉后就再也没人叫得醒了：
+            // 用户之后在系统设置里勾上「通知使用权」，
+            // 如果系统没把监听服务绑回来（比如国产 ROM 的老毛病），
+            // 就没有任何东西会再醒来检查一遍——
+            // 用户看到的正是「不点一下重新监听按钮就不生效」。
+            //
+            // 勾选授权一般发生在 App 已经打开过一次之后，
+            // 所以这条链必须一直活着，才能在授权之后接手。
+            ListenerKeepAlive.schedule(appContext)
             return
         }
 
@@ -63,7 +74,12 @@ object ListenerWatchdog {
         val lastEventAt = (snapshot["lastEventAt"] as? Long) ?: 0L
         val lastEscalateAt = (snapshot["lastEscalateAt"] as? Long) ?: 0L
         val lastKillAt = (snapshot["lastKillAt"] as? Long) ?: 0L
-        val killedAt = ProcessExit.lastRecoverableKillAt(appContext)
+        val killedAt = ProcessExit.lastUnexpectedKillAt(appContext)
+
+        // 「授权了多久」——判断「授权了却从来没连上过」的时间锚点。
+        val authorizedSince = ListenerDiagnostics.recordAuthorizedFirstSeen(appContext)
+        // 「进程是什么时候起来的」——判断「被杀之后有没有真的回来过」。
+        val processStartedAt = ListenerDiagnostics.processStartedAt()
 
         // 顺手记一下「进程上次是怎么没的」。
         //
@@ -95,7 +111,9 @@ object ListenerWatchdog {
                 disconnectedAt = disconnectedAt,
                 killedAt = killedAt,
                 lastEscalateAt = lastEscalateAt,
-                now = now
+                now = now,
+                authorizedSince = authorizedSince,
+                processStartedAt = processStartedAt
             )
         ) {
             Log.w(TAG, "看门狗($trigger)：判定绑定僵死，重置监听组件")

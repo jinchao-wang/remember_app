@@ -192,4 +192,121 @@ class ListenerHealthTest {
             )
         )
     }
+
+    // ---------------------------------------- 用户报的「授权了却从没连上」
+
+    @Test
+    fun `已经授权但从来没连上过且超过宽限期 意味着 该升级了`() {
+        // 这就是用户报的现场：早上刚装上，中午付款没记账上，
+        // 点了「重新监听」按钮才好——那条按钮走的是重置组件，
+        // 而自动路径以前拿不到任何证据，只能一直空转 requestRebind。
+        assertTrue(
+            ListenerHealth.shouldEscalate(
+                connectedAt = 0L,
+                disconnectedAt = 0L,
+                killedAt = 0L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 15 * 60 * 1000L,
+                processStartedAt = now - 15 * 60 * 1000L
+            )
+        )
+    }
+
+    @Test
+    fun `已经授权但刚授权不久 意味着 不用升级`() {
+        // 用户刚勾上「通知使用权」，系统可能几秒后才绑上来，别急。
+        assertFalse(
+            ListenerHealth.shouldEscalate(
+                connectedAt = 0L,
+                disconnectedAt = 0L,
+                killedAt = 0L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 60_000L,
+                processStartedAt = now - 60_000L
+            )
+        )
+    }
+
+    @Test
+    fun `从没观察到授权 意味着 不用升级`() {
+        // 不知道授权了多久，就下不了「授权了却绑不上」的结论。
+        assertFalse(
+            ListenerHealth.shouldEscalate(
+                connectedAt = 0L,
+                disconnectedAt = 0L,
+                killedAt = 0L,
+                lastEscalateAt = 0L,
+                now = now
+            )
+        )
+    }
+
+    @Test
+    fun `连上过就不算从没连上 意味着 不用升级`() {
+        // 已经连上过 -> 「授权了却绑不上」这条证据不成立。
+        assertFalse(
+            ListenerHealth.shouldEscalate(
+                connectedAt = now - 30 * 60 * 1000L,
+                disconnectedAt = 0L,
+                killedAt = 0L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 60 * 60 * 1000L,
+                processStartedAt = now - 30 * 60 * 1000L
+            )
+        )
+    }
+
+    // ---------------------------------- 被杀之后有没有真的重新起来过
+
+    @Test
+    fun `进程被杀后刚重新起来 意味着 不用升级`() {
+        // 用户刚把 App 打开，系统还没来得及回调 onListenerConnected，
+        // 这时候就重置组件属于误伤。
+        assertFalse(
+            ListenerHealth.shouldEscalate(
+                connectedAt = now - 10 * 60 * 1000L,
+                disconnectedAt = 0L,
+                killedAt = now - 6 * 60 * 1000L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 60 * 60 * 1000L,
+                processStartedAt = now - 60_000L
+            )
+        )
+    }
+
+    @Test
+    fun `进程被杀后起来很久仍没连上 意味着 该升级了`() {
+        // 进程确实重新起来了，起来了好几分钟绑定还是没恢复——真的僵死了。
+        assertTrue(
+            ListenerHealth.shouldEscalate(
+                connectedAt = now - 20 * 60 * 1000L,
+                disconnectedAt = 0L,
+                killedAt = now - 15 * 60 * 1000L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 60 * 60 * 1000L,
+                processStartedAt = now - 10 * 60 * 1000L
+            )
+        )
+    }
+
+    @Test
+    fun `进程被杀后起来的时间早于被杀时间 意味着 不用升级`() {
+        // 时间对不上（进程没真的重启过），不作为证据。
+        assertFalse(
+            ListenerHealth.shouldEscalate(
+                connectedAt = now - 20 * 60 * 1000L,
+                disconnectedAt = 0L,
+                killedAt = now - 15 * 60 * 1000L,
+                lastEscalateAt = 0L,
+                now = now,
+                authorizedSince = now - 60 * 60 * 1000L,
+                processStartedAt = now - 30 * 60 * 1000L
+            )
+        )
+    }
 }

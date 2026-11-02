@@ -595,4 +595,227 @@ void main() {
       expect(isSamePaymentPair(a, b), isFalse);
     });
   });
+
+  // ------------------------------------------ 用户反馈的「微信 + 信用卡记了两笔」
+
+  group('卡号后四位识别', () {
+    test('「尾号8888」能认出后四位', () {
+      expect(cardTailOfContent('您尾号8888的信用卡于10月20日消费支出人民币31.31元'), '8888');
+    });
+
+    test('「尾号****8888」也能认出后四位', () {
+      expect(cardTailOfContent('您的尾号****1234信用卡已还款'), '1234');
+    });
+
+    test('微信支付里的「招商银行(1234)信用卡」能认出后四位', () {
+      expect(
+        cardTailOfContent('你于2026年10月20日使用招商银行(1234)信用卡支付31.31元'),
+        '1234',
+      );
+    });
+
+    test('「信用卡(1234)」这种顺序也能认出', () {
+      expect(cardTailOfContent('信用卡(5678)消费31.31元'), '5678');
+    });
+
+    test('「卡号****8888」能认出后四位', () {
+      expect(cardTailOfContent('您的卡号****8888本月账单已出'), '8888');
+    });
+
+    test('认不出的正文返回 null', () {
+      expect(cardTailOfContent('微信支付 付款成功 ¥31.31'), isNull);
+      expect(cardTailOfContent(''), isNull);
+      // 订单号不是卡号，不能乱认。
+      expect(cardTailOfContent('您的订单(1234)已发货'), isNull);
+    });
+  });
+
+  group('认不出包名的信用卡通知', () {
+    test('正文写了「信用卡/尾号」-> 角色是 bank', () {
+      final id = identityOf(
+        packageName: 'com.icbc.creditcard',
+        content: '您尾号8888的信用卡于10月20日消费支出人民币31.31元',
+      );
+      expect(id.role, SourceRole.bank);
+      // 认不出是哪家银行，但认得出是哪张卡。
+      expect(id.bankId, isNull);
+      expect(id.cardTail, '8888');
+    });
+
+    test('只是「扣款」这种空话 -> 仍然是 other', () {
+      // 收得太松会让商家 App 的通知被当成银行通知，
+      // 那样微信那条就会被并掉，用户平白少一笔账。
+      final id = identityOf(packageName: 'com.unknown.shop', content: '扣款 31.31');
+      expect(id.role, SourceRole.other);
+    });
+
+    test('微信通知 + 信用卡 App 通知（认不出包名/银行名）-> 判为重复', () {
+      // 用户报的真实场景：微信记了一笔、信用卡 App 又记了一笔，其实是一笔付款。
+      // 根因：信用卡 App 的包名不在表里、正文里也没写银行名，
+      // 它的角色被判成「其它」，和「微信」配不成对。
+      final id = identityOf(
+        packageName: 'com.icbc.creditcard',
+        content: '您尾号8888的信用卡于10月20日消费支出人民币31.31元',
+      );
+      expect(id.role, SourceRole.bank);
+    });
+  });
+
+  group('同一张卡 = 同一笔', () {
+    Transaction record({
+      required String packageName,
+      required String content,
+      double amount = 31.31,
+      String type = 'expense',
+      DateTime? date,
+    }) =>
+        Transaction(
+          amount: amount,
+          type: type,
+          category: '转账',
+          date: date ?? DateTime(2026, 10, 19, 12, 0),
+          isAuto: true,
+          sourceApp: packageName,
+          note: content,
+        );
+
+    PaymentEvent event({
+      required String packageName,
+      required String content,
+      double amount = 31.31,
+      String type = 'expense',
+      DateTime? date,
+    }) =>
+        PaymentEvent(
+          amount: amount,
+          type: type,
+          sourceApp: packageName,
+          content: content,
+          timestamp: date ?? DateTime(2026, 10, 19, 12, 0),
+        );
+
+    final base = DateTime(2026, 10, 19, 12, 0);
+
+    test('信用卡 App 那条先到、微信那条后到 -> 判为重复', () {
+      // 用户报的真实场景：微信记了一笔、信用卡 App 又记了一笔，其实是一笔付款。
+      // 根因：信用卡 App 的包名不在表里、正文里也没写银行名，
+      // 它的角色被判成「其它」，和「微信」配不成对。
+      // 两条通知说的是同一张卡（后四位都是 1234），所以是同一笔。
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc.creditcard',
+            content: '您尾号1234的信用卡于10月20日消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.tencent.mm',
+          content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+        ),
+        eventTime: base.add(const Duration(minutes: 2)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('微信那条没写卡号 -> 照样按「平台 ↔ 银行」判为重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.icbc.creditcard',
+            content: '您尾号1234的信用卡于10月20日消费支出人民币31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.tencent.mm',
+          content: '微信支付 付款成功 ¥31.31',
+        ),
+        eventTime: base.add(const Duration(minutes: 2)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('两边都认不出银行，但卡号后四位一样 -> 判为重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 付款成功 ¥31.31',
+          ),
+        ],
+        event: event(
+          packageName: 'com.some.creditcard.app',
+          content: '您尾号8888的信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(seconds: 30)),
+      );
+      expect(dup, isNotNull);
+    });
+
+    test('卡号后四位不一样 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.some.creditcard.app',
+          content: '您尾号8888的信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(seconds: 30)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('同一张卡但金额不同 -> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.some.creditcard.app',
+          content: '您尾号1234的信用卡于10月20日消费支出人民币88.88元',
+          amount: 88.88,
+        ),
+        eventTime: base.add(const Duration(seconds: 30)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('同一张卡但隔太久（超过 10 分钟）-> 不是重复', () {
+      final dup = PaymentService.findDuplicate(
+        candidates: [
+          record(
+            packageName: 'com.tencent.mm',
+            content: '微信支付 你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+          ),
+        ],
+        event: event(
+          packageName: 'com.some.creditcard.app',
+          content: '您尾号1234的信用卡于10月20日消费支出人民币31.31元',
+        ),
+        eventTime: base.add(const Duration(minutes: 12)),
+      );
+      expect(dup, isNull);
+    });
+
+    test('身份层面：同一张卡能配成同一笔', () {
+      final a = identityOf(
+        packageName: 'com.tencent.mm',
+        content: '你于2026年10月20日使用招商银行(1234)信用卡支付31.31元',
+      );
+      final b = identityOf(
+        packageName: 'com.some.creditcard.app',
+        content: '您尾号1234的信用卡于10月20日消费支出人民币31.31元',
+      );
+      expect(a.cardTail, '1234');
+      expect(b.cardTail, '1234');
+      expect(isSameCard(a, b), isTrue);
+      expect(isSamePaymentPair(a, b), isTrue);
+    });
+  });
 }

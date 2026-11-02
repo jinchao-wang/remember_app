@@ -82,6 +82,29 @@ object ListenerHealth {
     const val ESCALATE_MIN_INTERVAL_MS = 6L * 60 * 60 * 1000
 
     /**
+     * 「已经授权，但监听服务从来没连上过」的宽限期。
+     *
+     * ## 为什么需要这一条
+     *
+     * 用户报的是「早上刚装上，中午付款没记账上，点了重新监听按钮才好」。
+     * 手动那条按钮走的是**重置组件**（disable -> enable），
+     * 而自动路径当时够不着这一招：
+     * - 「进程被杀过」——刚装的 App 根本没被杀过，没有证据；
+     * - 「系统明确断开过」——从头到尾没连上过，也就谈不上断开。
+     *
+     * 两条硬证据都不成立，自动路径就只会不停地 `requestRebind`，
+     * 而 `requestRebind` 对「绑定僵死」经常什么也不做——
+     * 于是自动修复永远修不好，只能等用户手动点按钮。
+     *
+     * ## 为什么这不是误伤
+     *
+     * 用户在系统设置里勾上「通知使用权」之后，系统会在**几秒内**
+     * 把监听服务绑上来（勾选动作本身就会触发一次 `requestRebind`）。
+     * 授权了 10 分钟还从来没连上过，就只可能是绑定真的僵死了。
+     */
+    const val NEVER_CONNECTED_GRACE_MS = 10L * 60 * 1000
+
+    /**
      * 要不要升级到「禁用/启用组件」这种重手段。
      *
      * ## 为什么要分级
@@ -100,33 +123,43 @@ object ListenerHealth {
      *
      * 「半小时没收到通知」在用户安静的手机上完全正常，
      * 拿它当证据会动不动就误伤（误伤一次，系统可能把我们拉黑，更糟）。
-     * 所以这里只认两种**硬证据**：
+     * 所以这里只认三种**硬证据**：
      *
-     * 1. **进程被杀过，而且之后再没连上过**——
-     *    系统把我们杀了，却没把我们绑回来。
-     * 2. **系统明确回调过断开**，而且过了宽限期还是没连上。
+     * 1. **已经授权，但从来没连上过**——
+     *    系统该绑而没绑，绑定从一开始就是死的；
+     * 2. **进程被杀过，而且之后再没连上过**——
+     *    系统把我们杀了，却没把我们绑回来；
+     * 3. **系统明确回调过断开**，而且过了宽限期还是没连上。
      *
      * @param connectedAt 最后一次连上系统的时间。
      * @param disconnectedAt 最后一次与系统断开的时间。
      * @param killedAt 进程最后一次被系统结束的时间；0 表示没有这个记录。
      * @param lastEscalateAt 上一次动用重手段的时间；0 表示从来没动过。
      * @param now 当前时间。
+     * @param authorizedSince 第一次发现「系统里已经勾了通知使用权」的时间；
+     *   0 表示还没观察到授权。
+     * @param processStartedAt 当前进程启动的时间；0 表示不知道。
      */
     fun shouldEscalate(
         connectedAt: Long,
         disconnectedAt: Long,
         killedAt: Long,
         lastEscalateAt: Long,
-        now: Long
+        now: Long,
+        authorizedSince: Long = 0L,
+        processStartedAt: Long = 0L
     ): Boolean {
         // 限频：副作用太大，不能频繁用。
         if (lastEscalateAt > 0 && now - lastEscalateAt < ESCALATE_MIN_INTERVAL_MS) {
             return false
         }
 
-        // 证据一：进程被杀过，之后再没连上过。
-        if (killedAt > 0 && connectedAt <= killedAt &&
-            now - killedAt > RECONNECT_GRACE_MS
+        // 证据一：已经授权，监听服务却从来没连上过。
+        //
+        // 这正是「刚装上就不生效、点一下重新监听才好」的现场：
+        // 自动路径以前拿不到任何证据，只能一直空转 requestRebind。
+        if (authorizedSince > 0 && connectedAt <= 0 &&
+            now - authorizedSince > NEVER_CONNECTED_GRACE_MS
         ) {
             return true
         }
@@ -136,6 +169,22 @@ object ListenerHealth {
             now - disconnectedAt > RECONNECT_GRACE_MS
         ) {
             return true
+        }
+
+        // 证据三：进程被杀过，之后再没连上过。
+        if (killedAt > 0 && connectedAt <= killedAt &&
+            now - killedAt > RECONNECT_GRACE_MS
+        ) {
+            // 还要求「进程被杀之后确实重新起来过」。
+            //
+            // 否则用户刚把 App 打开（系统还没来得及回调 onListenerConnected）
+            // 就会被误判成绑定僵死，白白动一次组件。
+            if (processStartedAt <= 0L) return true
+            if (processStartedAt > killedAt &&
+                now - processStartedAt > RECONNECT_GRACE_MS
+            ) {
+                return true
+            }
         }
 
         return false
